@@ -1,0 +1,14 @@
+# Plaintext Secrets stay out of the repo; commit *.secret.example.yaml instead
+*.secret.yaml
+
+# kubeconfig
+kubeconfig*
+k3s.yaml
+
+.env
+
+# Python bytecode (scripts/configure.py)
+__pycache__/
+
+# Site settings describe the home network; the public repo only has site.example.yaml
+site.yaml

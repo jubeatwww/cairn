@@ -1,0 +1,9 @@
+# https://artifacthub.io/packages/helm/cert-manager/cert-manager?modal=values
+crds:
+  enabled: true
+# Check DNS-01 propagation through public resolvers over IPv4. By default cert-manager queries the
+# zone's authoritative servers directly and may pick their IPv6 address, which this IPv4-only
+# cluster can't reach ("dial udp [2604:...]:53: connect: network is unreachable").
+extraArgs:
+  - --dns01-recursive-nameservers-only
+  - --dns01-recursive-nameservers=1.1.1.1:53,8.8.8.8:53

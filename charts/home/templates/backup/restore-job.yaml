@@ -1,0 +1,46 @@
+{{- /* Rendered only by scripts/restore-home.sh (restore.date set), never by helm install/upgrade. */ -}}
+{{- with .Values.restore.date }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $.Values.restore.job | default (printf "restore-%s" .) }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: restore
+          image: {{ $.Values.images.tools }}
+          command:
+            - bash
+            - -c
+            - |
+              set -euo pipefail
+              ls -l /backup/{{ . }}
+              tar -xzf /backup/{{ . }}/zigbee2mqtt.tar.gz -C /data/zigbee2mqtt
+              tar -xzf /backup/{{ . }}/home-assistant.tar.gz -C /data/home-assistant
+              echo "restored {{ . }}"
+          volumeMounts:
+            - name: zigbee2mqtt
+              mountPath: /data/zigbee2mqtt
+            - name: home-assistant
+              mountPath: /data/home-assistant
+            - name: nas
+              mountPath: /backup
+              readOnly: true
+      volumes:
+        - name: zigbee2mqtt
+          persistentVolumeClaim:
+            claimName: zigbee2mqtt-data
+        - name: home-assistant
+          persistentVolumeClaim:
+            claimName: home-assistant-config
+        - name: nas
+          nfs:
+            server: {{ $.Values.nas.server }}
+            path: {{ $.Values.nas.path }}
+            readOnly: true
+{{- end }}

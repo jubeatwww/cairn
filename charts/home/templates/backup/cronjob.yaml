@@ -1,0 +1,66 @@
+# Nightly backup of this namespace's state to the NAS (site.yaml: nas), one directory per day,
+# kept for 14 days:
+#   zigbee2mqtt.tar.gz     network key, coordinator backup, paired devices
+#   home-assistant.tar.gz  .storage (users, areas, integrations), automations, blueprints;
+#                          not the history database, logs or caches
+# The node needs an NFS client (nfs-common) for kubelet to mount the share.
+# Restore: scripts/restore-home.sh <YYYY-MM-DD>.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: "0 4 * * *"
+  timeZone: {{ required "timezone is required (site.yaml)" .Values.timezone }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: {{ .Values.images.tools }}
+              env:
+                # POSIX form, so dates follow the site's timezone without tzdata in the image.
+                - name: TZ
+                  value: {{ required "timezonePosix is required (site.yaml)" .Values.timezonePosix }}
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+                  dest=/backup/$(date +%F)
+                  mkdir -p "$dest"
+                  tar -czf "$dest/zigbee2mqtt.tar.gz" -C /data/zigbee2mqtt --exclude=./log .
+                  tar -czf "$dest/home-assistant.tar.gz" -C /data/home-assistant \
+                    --exclude='./home-assistant_v2.db*' --exclude='./home-assistant.log*' \
+                    --exclude=./deps --exclude=./tts --exclude=./backups .
+                  find /backup -mindepth 1 -maxdepth 1 -type d -name '20??-??-??' -mtime +14 -exec rm -rf {} +
+                  ls -l "$dest"
+              volumeMounts:
+                - name: zigbee2mqtt
+                  mountPath: /data/zigbee2mqtt
+                  readOnly: true
+                - name: home-assistant
+                  mountPath: /data/home-assistant
+                  readOnly: true
+                - name: nas
+                  mountPath: /backup
+          volumes:
+            - name: zigbee2mqtt
+              persistentVolumeClaim:
+                claimName: zigbee2mqtt-data
+                readOnly: true
+            - name: home-assistant
+              persistentVolumeClaim:
+                claimName: home-assistant-config
+                readOnly: true
+            - name: nas
+              nfs:
+                server: {{ required "nas.server is required (site.yaml)" .Values.nas.server }}
+                path: {{ required "nas.path is required (site.yaml)" .Values.nas.path }}

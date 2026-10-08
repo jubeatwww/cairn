@@ -1,0 +1,13 @@
+# Chart defaults: versions and the like. Site settings (domain, IPs, NAS, Zigbee device...) come from
+# site.yaml at the repo root (scripts/apply.sh). Bump an image here, then run scripts/apply.sh.
+images:
+  homeAssistant: ghcr.io/home-assistant/home-assistant:2026.9.4
+  zigbee2mqtt: ghcr.io/koenkk/zigbee2mqtt:2.14.2
+  mosquitto: eclipse-mosquitto:2.0.22
+  # bash, GNU tar, find: used by the backup and restore jobs.
+  tools: debian:trixie-20260918-slim
+
+# Set only by scripts/restore-home.sh, which renders templates/backup/restore-job.yaml on its own.
+restore:
+  date: ""
+  job: ""

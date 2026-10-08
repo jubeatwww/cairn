@@ -1,0 +1,17 @@
+# Holds configuration.yaml (with the generated network key), database.db and
+# coordinator_backup.json. Losing it means re-pairing every device: backed up nightly.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zigbee2mqtt-data
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    # Keep the data even if the release is uninstalled.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi

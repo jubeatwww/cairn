@@ -1,0 +1,26 @@
+{{- $servers := dict
+  "letsencrypt-staging" "https://acme-staging-v02.api.letsencrypt.org/directory"
+  "letsencrypt-prod" "https://acme-v02.api.letsencrypt.org/directory" }}
+{{- range $name, $server := $servers }}
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ $name }}
+spec:
+  acme:
+    server: {{ $server }}
+    email: {{ required "acmeEmail is required (site.yaml)" $.Values.acmeEmail }}
+    privateKeySecretRef:
+      name: {{ $name }}-account-key
+    solvers:
+      - dns01:
+          webhook:
+            # Must match groupName in helm/cert-manager-webhook-gandi/values.yaml.
+            groupName: acme.bwolf.me
+            solverName: gandi
+            config:
+              patSecretRef:
+                name: gandi-credentials
+                key: pat
+{{- end }}

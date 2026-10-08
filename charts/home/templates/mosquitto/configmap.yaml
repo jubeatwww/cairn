@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mosquitto
+  namespace: {{ .Release.Namespace }}
+data:
+  mosquitto.conf: |
+    # In-cluster only. networkpolicy.yaml limits who can connect, so no passwords.
+    # No persistence: Zigbee2MQTT republishes its state when Home Assistant reconnects.
+    listener 1883
+    allow_anonymous true
+    persistence false
+    log_dest stdout

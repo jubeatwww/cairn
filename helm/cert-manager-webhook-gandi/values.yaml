@@ -1,0 +1,5 @@
+# https://github.com/SINTEF/cert-manager-webhook-gandi/blob/main/charts/cert-manager-webhook-gandi/README.md
+# Must match dns01.webhook.groupName in the ClusterIssuers.
+groupName: acme.bwolf.me
+# gandiPat / gandiApiToken stay unset so the token never lands in this file.
+# The Secret comes from charts/cluster, with the token from site.secret.yaml.

@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: home-assistant
+  namespace: {{ .Release.Namespace }}
+data:
+  # Mounted read-only over /config/configuration.yaml. Restart the pod after changing it.
+  # Everything set up in the UI lives in the PVC instead.
+  configuration.yaml: |
+    default_config:
+
+    automation: !include automations.yaml
+    script: !include scripts.yaml
+    scene: !include scenes.yaml
+
+  # HTTP settings no longer come from YAML (since 2026.9 HA ignores `http:` after a one-time
+  # migration, and the migrated config reverts unless confirmed in the UI within 5 minutes).
+  # The init container writes this to /config/.storage/http on a fresh volume only.
+  # Requests arrive through Traefik in the pod network, so trust its X-Forwarded-For.
+  http-storage.json: |
+    {
+      "version": 2,
+      "minor_version": 2,
+      "key": "http",
+      "data": {
+        "stable": {
+          "server_port": 8123,
+          "use_x_forwarded_for": true,
+          "trusted_proxies": [{{ required "network.podCidr is required (site.yaml)" .Values.network.podCidr | quote }}],
+          "cors_allowed_origins": ["https://cast.home-assistant.io"],
+          "login_attempts_threshold": -1,
+          "ip_ban_enabled": true,
+          "ssl_profile": "modern",
+          "use_x_frame_options": true,
+          "created_at": "2026-10-09T00:00:00+00:00",
+          "error": null,
+          "error_message": null
+        },
+        "pending": null,
+        "yaml_migration_done": true
+      }
+    }

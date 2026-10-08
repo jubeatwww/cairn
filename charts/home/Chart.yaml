@@ -1,0 +1,5 @@
+apiVersion: v2
+name: home
+description: Home automation on cairn. Mosquitto, Zigbee2MQTT, Home Assistant and their nightly backup.
+type: application
+version: 0.1.0
