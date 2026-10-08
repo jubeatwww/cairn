@@ -16,7 +16,7 @@ Working notes for agents. Read [README.md](README.md) first for the cluster spec
 
 - `site.yaml`: every site-specific value, each with a comment saying what it's for. It's gitignored; `scripts/configure.py` generates it from questions. A new key goes in four places: `site.yaml`, `site.example.yaml` (placeholder value, same keys), a question plus the file template in `scripts/configure.py` (running it with all defaults must report no changes), and the chart template, referenced with `required "<key> is required (site.yaml)"` so a missing value fails the render with a clear message.
 - `charts/<name>/`: local charts for this cluster, rendered with `site.yaml`.
-  - `charts/cluster/`: cluster-wide pieces. `charts/home/`: the home automation stack in namespace `home`.
+  - `charts/cluster/`: cluster-wide pieces. `charts/home/`: the home automation stack in namespace `home`. `charts/immich/`: Immich in namespace `immich`, public.
   - `templates/<app>/`: one directory per app, one resource per file, e.g. `deployment.yaml`, `service.yaml`, `ingress.yaml`.
   - Chart defaults that don't depend on the site, such as image versions, go in the chart's `values.yaml`.
   - Namespaced resources set `metadata.namespace` explicitly: `{{ .Release.Namespace }}`, or a literal namespace for objects that live elsewhere (e.g. `kube-system`).

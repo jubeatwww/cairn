@@ -22,8 +22,9 @@ site.yaml           gitignored site settings: domain, IPs, NAS, Zigbee device, t
 site.secret.yaml    gitignored secrets (the Gandi PAT); template: site.secret.example.yaml
 charts/cluster/     local chart: Let's Encrypt ClusterIssuers, Gandi DNS-01 credentials, Traefik settings
 charts/home/        local chart: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup
+charts/immich/      local chart: Immich, public, with the photo library on the NAS
 helm/<release>/     third-party charts: values.yaml + install.sh (cert-manager, the Gandi webhook)
-scripts/            helpers you run by hand: configure, apply, Gandi setup, restore
+scripts/            helpers you run by hand: configure, apply, Gandi setup, restore, Immich library rw/ro
 ```
 
 The local charts hold templates only. Every site-specific value comes from `site.yaml`; versions (image tags) live in each chart's `values.yaml`. `scripts/configure.py` writes `site.yaml` from questions, offering the current values or ones detected on the node, so you don't have to edit it by hand.
@@ -49,10 +50,7 @@ Requests by bare IP get Traefik's `404 page not found`. That's expected: no Ingr
 
 ### LAN-only services
 
-Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public one. DNS alone doesn't protect them: Traefik routes by `Host` header, so anyone who sends that header to the public IP reaches the service. Every LAN-only Ingress therefore:
-
-- attaches the namespace's `lan-only` Traefik middleware (`ipAllowList` for `network.lanCidr`), e.g. `traefik.ingress.kubernetes.io/router.middlewares: home-lan-only@kubernetescrd`. This works because Traefik's Service uses `externalTrafficPolicy: Local` (`charts/cluster`), which keeps the real client IP. Requests made from the node itself still show up with an internal IP and get 403, so test from another device.
-- uses the namespace's wildcard `*.<domain>` certificate instead of a per-host one, so the hostname doesn't show up in public Certificate Transparency logs.
+Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public one. DNS alone doesn't protect them: Traefik routes by `Host` header, so anyone who sends that header to the public IP reaches the service. Every LAN-only Ingress therefore attaches the namespace's `lan-only` Traefik middleware (`ipAllowList` for `network.lanCidr`), e.g. `traefik.ingress.kubernetes.io/router.middlewares: home-lan-only@kubernetescrd`. This works because Traefik's Service uses `externalTrafficPolicy: Local` (`charts/cluster`), which keeps the real client IP. Requests made from the node itself still show up with an internal IP and get 403, so test from another device.
 
 ## Restore
 
@@ -81,7 +79,7 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
 
 cert-manager issues Let's Encrypt certificates through two ClusterIssuers, `letsencrypt-staging` and `letsencrypt-prod`. Both use DNS-01 on Gandi LiveDNS (so wildcards work) via `cert-manager-webhook-gandi`, authenticated with a Gandi Personal Access Token.
 
-For a public host, give the Ingress the annotation `cert-manager.io/cluster-issuer: letsencrypt-prod` and a `tls:` section with the host and a `secretName`.
+Every Ingress, public or LAN-only, gets its own certificate: the annotation `cert-manager.io/cluster-issuer: letsencrypt-prod` and a `tls:` section with the host and a `secretName`.
 
 The PAT expires. Before it does, create a new one in Gandi and run `scripts/setup-gandi-dns01.sh` again. The script checks the token, updates `site.secret.yaml` and the Secret, and proves issuance with a staging certificate. To check domains other than `site.yaml`'s, pass them as arguments.
 
@@ -91,6 +89,27 @@ The PAT expires. Before it does, create a new one in Gandi and run `scripts/setu
 
 - Back up now: `kubectl -n home create job --from=cronjob/backup backup-manual-$(date +%s)`
 - Restore a day: `scripts/restore-home.sh 2026-10-09`. It stops both apps, unpacks the archives over their volumes, and starts them again.
+
+## Immich
+
+`charts/immich` runs Immich publicly at `https://<immich.host>.<domain>`, so albums can be shared with people outside the LAN. Its own data (uploads, thumbnails, encoded videos, nightly database dumps) and Postgres live on the node's disk. The photos stay on the NAS: the export `immich.libraryPath` is mounted read-only at `/mnt/library`. In Immich, add it under Administration > External Libraries with the import path `/mnt/library`, and set Administration > Settings > Server > External domain to the public URL so share links point there.
+
+**First install.** The first visitor to a fresh Immich becomes its admin, so it starts without an Ingress (and so without a certificate that would announce the hostname in the CT logs). Create the admin through a tunnel, then make it public:
+
+```sh
+helm upgrade --install immich charts/immich -n immich --create-namespace -f site.yaml --set ingress=false --wait --timeout 15m
+kubectl -n immich port-forward svc/immich-server 2283:2283     # then open http://localhost:2283
+scripts/apply.sh                                               # adds the public Ingress
+```
+
+Run the port-forward on a computer whose kubectl reaches the cluster (the node's kubeconfig with `127.0.0.1` replaced by the node's LAN IP). Or run it on the node and tunnel to it, which leaves no cluster credentials on the computer: `ssh -N -L 2283:localhost:2283 <user>@<node>`.
+
+**Editing metadata.** Immich writes edits to tags, descriptions, dates and ratings as `.xmp` sidecars next to the originals, and there's no setting to put them elsewhere. On the read-only mount that write fails silently and Immich re-reads the file, so the edit is lost. Switch the library to writable first (the NAS export must allow writes), and back when done:
+
+```sh
+scripts/immich-library.sh rw
+scripts/immich-library.sh ro     # scripts/apply.sh also leaves it read-only
+```
 
 ## Secrets
 

@@ -1,26 +1,27 @@
-# LAN-only: {{ include "home.haHost" . }} resolves to {{ .Values.network.nodeIp }}, and lan-only blocks anything else.
+{{- if .Values.ingress }}
+# Public, so shared albums work for people outside the LAN. Its own certificate: the name is public anyway.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: home-assistant
+  name: immich
   namespace: {{ .Release.Namespace }}
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
-    traefik.ingress.kubernetes.io/router.middlewares: {{ include "home.lanOnly" . }}
 spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - {{ include "home.haHost" . }}
-      secretName: home-assistant-tls
+        - {{ include "immich.host" . }}
+      secretName: immich-tls
   rules:
-    - host: {{ include "home.haHost" . }}
+    - host: {{ include "immich.host" . }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: home-assistant
+                name: immich-server
                 port:
                   name: http
+{{- end }}

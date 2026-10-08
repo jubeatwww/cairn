@@ -1,0 +1,24 @@
+# Chart defaults: versions and the like. Site settings (domain, NAS, library path) come from
+# site.yaml at the repo root (scripts/apply.sh). Bump the images together, then run scripts/apply.sh.
+images:
+  server: ghcr.io/immich-app/immich-server:v3.2.4
+  machineLearning: ghcr.io/immich-app/immich-machine-learning:v3.2.4
+  # Pinned by digest, as in Immich's docker-compose.yml for the same release.
+  postgres: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+  valkey: docker.io/valkey/valkey:9@sha256:70739f85ad2ee01a726a965584a0f94895f01b0c60b3cc8b0aeef11eaa6888cf
+
+# The public Ingress. The first visitor to a fresh Immich creates the admin account, so the first
+# install turns this off and the admin is created through a tunnel (README "Immich"). With no
+# Ingress there is no certificate either, so the hostname doesn't reach the CT logs early.
+ingress: true
+
+# The external library is mounted read-only. Metadata edits write .xmp sidecars next to the
+# originals; scripts/immich-library.sh rw|ro flips this for those sessions.
+libraryWritable: false
+
+# Requested sizes for the local-path volumes (local-path doesn't enforce them).
+storage:
+  # Uploads from the apps, thumbnails, encoded videos, Immich's nightly database dumps.
+  upload: 200Gi
+  postgres: 10Gi
+  modelCache: 10Gi

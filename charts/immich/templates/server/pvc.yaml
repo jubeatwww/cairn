@@ -1,0 +1,16 @@
+# Immich's own storage (docker-compose's UPLOAD_LOCATION): uploads from the apps, thumbnails,
+# encoded videos, and the nightly database dumps in backups/. On the node's disk.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: immich-upload
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: {{ .Values.storage.upload }}

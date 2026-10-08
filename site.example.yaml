@@ -1,7 +1,7 @@
 # Example site.yaml: copy it to site.yaml (gitignored) and fill in, or run scripts/configure.py.
 # Placeholder values only. The real ones describe a home network and stay out of the public repo.
 
-# Public DNS zone on Gandi LiveDNS. LAN-only hosts are <name>.<domain> and share a wildcard cert.
+# Public DNS zone on Gandi LiveDNS. Every host is <name>.<domain> with its own Let's Encrypt cert.
 domain: example.com
 # Let's Encrypt account email.
 acmeEmail: you@example.com
@@ -32,3 +32,9 @@ zigbee:
 homeAssistant:
   # Served at https://<host>.<domain>, LAN only.
   host: ha
+
+immich:
+  # Public at https://<host>.<domain>, so albums can be shared.
+  host: immich
+  # NFS export on nas.server with the photo library. Mounted read-only as an external library.
+  libraryPath: /volume1/photos

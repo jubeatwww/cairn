@@ -1,5 +1,7 @@
-# Preserve client source IPs so ipAllowList middlewares see the real address.
-# With the default (Cluster), kube-proxy masquerades external traffic to the LoadBalancer IP.
+# - externalTrafficPolicy Local: preserve client source IPs so ipAllowList middlewares see the
+#   real address. With the default (Cluster), kube-proxy masquerades external traffic.
+# - Redirect HTTP to HTTPS, for public hosts like Immich.
+# - readTimeout: Traefik v3 cuts request bodies off after 60s, too short for large video uploads.
 apiVersion: helm.cattle.io/v1
 kind: HelmChartConfig
 metadata:
@@ -10,3 +12,15 @@ spec:
     service:
       spec:
         externalTrafficPolicy: Local
+    ports:
+      web:
+        http:
+          redirections:
+            entryPoint:
+              to: websecure
+              scheme: https
+              permanent: true
+      websecure:
+        transport:
+          respondingTimeouts:
+            readTimeout: 600s

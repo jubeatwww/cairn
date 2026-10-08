@@ -43,4 +43,8 @@ echo "==> charts/home"
 helm upgrade --install home charts/home --namespace home --create-namespace \
   --values site.yaml --wait --timeout 10m "${dry[@]}" > /dev/null
 
+echo "==> charts/immich"
+helm upgrade --install immich charts/immich --namespace immich --create-namespace \
+  --values site.yaml --wait --timeout 15m "${dry[@]}" > /dev/null
+
 echo "==> Done${dry:+ (dry run, nothing changed)}"

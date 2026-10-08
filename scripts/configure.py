@@ -164,7 +164,9 @@ def main():
         print(f"  注意：{device} 目前不存在（還沒插上？）")
     adapter = ask("Zigbee adapter 類型", get("zigbee", "adapter") or "zstack", valid_adapter)
 
-    ha_host = ask(f"\nHome Assistant 的主機名稱（<名稱>.{domain}）", get("homeAssistant", "host") or "ha", valid_label)
+    ha_host = ask(f"\nHome Assistant 的主機名稱（<名稱>.{domain}，只限內網）", get("homeAssistant", "host") or "ha", valid_label)
+    immich_host = ask(f"Immich 的主機名稱（<名稱>.{domain}，公開）", get("immich", "host") or "immich", valid_label)
+    library = ask(f"照片庫在 NAS（{nas}）上的 export 路徑，Immich 會唯讀掛載", get("immich", "libraryPath"), valid_abs_path)
 
     q = lambda v: yaml.safe_dump(v, default_flow_style=True).strip().removesuffix("\n...")  # noqa: E731
     text = f"""\
@@ -174,7 +176,7 @@ def main():
 # scripts/configure.py rewrites it from questions; site.example.yaml shows the shape.
 # Secrets go in site.secret.yaml (gitignored too; template: site.secret.example.yaml).
 
-# Public DNS zone on Gandi LiveDNS. LAN-only hosts are <name>.<domain> and share a wildcard cert.
+# Public DNS zone on Gandi LiveDNS. Every host is <name>.<domain> with its own Let's Encrypt cert.
 domain: {q(domain)}
 # Let's Encrypt account email.
 acmeEmail: {q(email)}
@@ -205,6 +207,12 @@ zigbee:
 homeAssistant:
   # Served at https://<host>.<domain>, LAN only.
   host: {q(ha_host)}
+
+immich:
+  # Public at https://<host>.<domain>, so albums can be shared.
+  host: {q(immich_host)}
+  # NFS export on nas.server with the photo library. Mounted read-only as an external library.
+  libraryPath: {q(library)}
 """
     old = OUT.read_text() if OUT.exists() else ""
     if old == text:
