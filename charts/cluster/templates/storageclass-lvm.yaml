@@ -1,0 +1,19 @@
+{{- $lvm := .Values.lvm | default dict }}
+{{- with .Values.lvmStorageClass }}
+# Volumes with a hard size cap, carved out of an LVM volume group (values.yaml, lvmStorageClass).
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .name }}
+provisioner: local.csi.openebs.io
+parameters:
+  storage: lvm
+  volgroup: {{ required "lvm.volumeGroup is required (site.yaml)" $lvm.volumeGroup | quote }}
+  fsType: {{ .fsType | quote }}
+  {{- with .formatOptions }}
+  formatOptions: {{ . | quote }}
+  {{- end }}
+allowVolumeExpansion: true
+# Local volumes: create the logical volume once the pod is scheduled, on that pod's node.
+volumeBindingMode: WaitForFirstConsumer
+{{- end }}

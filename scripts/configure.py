@@ -4,7 +4,7 @@
     scripts/configure.py [output]      default output: site.yaml at the repo root
 
 Each question offers a default: the current site.yaml value, or one detected on this node
-(LAN IP and CIDR, timezone, Zigbee USB device, cni0 gateway). Enter keeps it. Answers are
+(LAN IP and CIDR, timezone, Zigbee USB device, cni0 gateway, LVM volume group). Enter keeps it. Answers are
 validated, and the diff is shown before anything is written. Secrets are not asked here:
 scripts/setup-gandi-dns01.sh takes the Gandi PAT. Afterwards: scripts/apply.sh --dry-run.
 """
@@ -46,6 +46,16 @@ def detect_lan():
 def detect_pod_gateway():
     m = re.search(r"inet (\d+\.\d+\.\d+\.\d+)/", sh("ip", "-4", "-o", "addr", "show", "cni0"))
     return m.group(1) if m else None
+
+
+def detect_volume_groups():
+    """LVM volume groups with an active logical volume, from udev: vgs needs root."""
+    vgs = set()
+    for dev in glob.glob("/dev/dm-*"):
+        m = re.search(r"^E: DM_VG_NAME=(.+)$", sh("udevadm", "info", dev), re.M)
+        if m:
+            vgs.add(m.group(1))
+    return sorted(vgs)
 
 
 def detect_timezone():
@@ -101,6 +111,10 @@ def valid_abs_path(v):
 
 def valid_adapter(v):
     return None if v in ADAPTERS else "可用的值：" + "、".join(ADAPTERS)
+
+
+def valid_vg(v):
+    return None if re.fullmatch(r"[A-Za-z0-9+_.][A-Za-z0-9+_.-]*", v) else "不是合法的 volume group 名稱"
 
 
 
@@ -186,6 +200,10 @@ def main():
         print(f"  注意：{device} 目前不存在（還沒插上？）")
     adapter = ask("Zigbee adapter 類型", get("zigbee", "adapter") or "zstack", valid_adapter)
 
+    vgs = detect_volume_groups()
+    print("\n這台機器上的 LVM volume group：" + ("、".join(vgs) if vgs else "（沒有）"))
+    vg = ask("給限制大小的 volume 用的 volume group（StorageClass lvm）", get("lvm", "volumeGroup") or (vgs[0] if len(vgs) == 1 else None), valid_vg)
+
     ha_host = ask("\nHome Assistant 的主機名稱（只限內網）", get("homeAssistant", "hostname") or old_host("homeAssistant", "ha"), valid_hostname)
     immich_host = ask("Immich 的主機名稱（公開）", get("immich", "hostname") or old_host("immich", "immich"), valid_hostname)
     library = ask(f"照片庫在 NAS（{nas}）上的 export 路徑", get("immich", "libraryPath"), valid_abs_path)
@@ -232,6 +250,11 @@ zigbee:
   device: {q(device)}
   # zstack for TI chips (CC2652, CC2530). Other chips: see Zigbee2MQTT's adapter docs.
   adapter: {q(adapter)}
+
+lvm:
+  # LVM volume group on the node for the size-capped volumes (StorageClass lvm). Its unallocated
+  # space is all they can use. Ubuntu's installer names it ubuntu-vg.
+  volumeGroup: {q(vg)}
 
 homeAssistant:
   # LAN only: its DNS record points at network.nodeIp.

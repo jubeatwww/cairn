@@ -1,0 +1,9 @@
+# https://github.com/openebs/lvm-localpv
+# OpenEBS LVM LocalPV: the CSI driver behind the StorageClass lvm (charts/cluster). Each volume is
+# a logical volume of exactly its requested size, carved out of an LVM volume group on the node
+# (lvm.volumeGroup in site.yaml), so it can't outgrow that size or fill the root filesystem.
+# The volume group and its free space are host setup.
+
+# Don't send usage data to OpenEBS.
+analytics:
+  enabled: false

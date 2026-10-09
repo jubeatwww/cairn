@@ -28,6 +28,17 @@ solvers:
       ingress:
         ingressClassName: traefik
 
+# StorageClass for volumes that keep growing (metrics, logs, Immich's thumbnails). Each volume is
+# a logical volume of exactly its size, in the volume group lvm.volumeGroup (site.yaml), created by
+# OpenEBS LVM LocalPV (helm/lvm-localpv). Writes past the size fail with "no space left" instead
+# of filling the node's disk. Raise a PVC's size to grow it in place, while the group has room.
+# k3s's default local-path stays for the small volumes: it neither caps nor reserves their size.
+lvmStorageClass:
+  name: lvm
+  fsType: ext4
+  # No blocks reserved for root (ext4 keeps 5% by default): these volumes hold app data only.
+  formatOptions: "-m 0"
+
 # k3s's bundled Traefik, set through a HelmChartConfig.
 traefik:
   # Local keeps client source IPs, so ipAllowList middlewares see the real address.

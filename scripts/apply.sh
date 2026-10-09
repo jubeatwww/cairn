@@ -5,6 +5,7 @@
 #   scripts/apply.sh --dry-run   validate the local charts against the cluster, change nothing
 #
 # cert-manager goes first: its CRDs back the ClusterIssuers and Certificates in the local charts.
+# Then LVM LocalPV and charts/cluster, whose StorageClass lvm the monitoring volumes need.
 # Uses $KUBECONFIG, else ~/.kube/config, else k3s's root-only kubeconfig (run with sudo). Idempotent.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -26,25 +27,28 @@ esac
   exit 1
 }
 
-if ((${#dry[@]})); then
-  echo "==> Dry run: skipping helm/*/install.sh (third-party releases)"
-else
-  echo "==> cert-manager"
-  helm/cert-manager/install.sh
-  echo "==> cert-manager-webhook-gandi"
-  helm/cert-manager-webhook-gandi/install.sh
-  # Monitoring next: kube-prometheus-stack brings the ServiceMonitor/PodMonitor CRDs.
-  echo "==> kube-prometheus-stack"
-  helm/kube-prometheus-stack/install.sh
-  echo "==> loki"
-  helm/loki/install.sh
-  echo "==> alloy"
-  helm/alloy/install.sh
-fi
+# A third-party release in helm/. Its install.sh has no dry-run mode, so a dry run skips it.
+release() {
+  if ((${#dry[@]})); then
+    echo "==> $1 (skipped: dry run)"
+  else
+    echo "==> $1"
+    "helm/$1/install.sh"
+  fi
+}
+
+release cert-manager
+release cert-manager-webhook-gandi
+release lvm-localpv
 
 echo "==> charts/cluster"
 helm upgrade --install cluster charts/cluster --namespace kube-system \
   --values site.yaml --values site.secret.yaml --wait --timeout 5m "${dry[@]}" > /dev/null
+
+# Monitoring next: kube-prometheus-stack brings the ServiceMonitor/PodMonitor CRDs.
+release kube-prometheus-stack
+release loki
+release alloy
 
 echo "==> charts/home"
 helm upgrade --install home charts/home --namespace home --create-namespace \

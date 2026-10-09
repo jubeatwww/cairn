@@ -25,6 +25,7 @@ Working notes for agents. Read [README.md](README.md) first for the cluster spec
   - Namespaced resources set `metadata.namespace` explicitly: `{{ .Release.Namespace }}`, or a literal namespace for objects that live elsewhere (e.g. `kube-system`).
   - Keep resource names and selectors stable. Helm owns objects by name, and a Deployment's selector can't change in place.
   - PVCs carry `helm.sh/resource-policy: keep`, so uninstalling a release never deletes data.
+  - PVCs that keep growing (metrics, logs, thumbnails) use the StorageClass `lvm`, which caps them at their size; small ones use `local-path`. Set the class and size in the chart's `values.yaml`. A PVC's class can't change in place (README "Storage").
 - `helm/<release>/`: third-party charts, one directory per release, holding `values.yaml` and an idempotent `install.sh`. Example: `helm/cert-manager/`.
   - `install.sh` runs `helm upgrade --install` with `--repo` and an exact `--version`, so it needs no `helm repo add` state and gives the same result on a fresh machine.
   - Use the helm CLI (v4). Don't use k3s's `HelmChart` resource.

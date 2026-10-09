@@ -16,9 +16,17 @@ certIssuer: letsencrypt-prod
 ingress: true
 
 
-# Requested sizes for the local-path volumes (local-path doesn't enforce them).
+# Each volume's size and StorageClass. lvm (charts/cluster) caps a volume at its size, for the one
+# that grows with the library; local-path, k3s's default, neither caps nor reserves it.
+# A PVC's class can't change in place: moving to another class means a new PVC and copying.
 storage:
   # Uploads from the apps, thumbnails, encoded videos, Immich's nightly database dumps.
-  upload: 200Gi
-  postgres: 10Gi
-  modelCache: 10Gi
+  data:
+    size: 40Gi
+    storageClass: lvm
+  postgres:
+    size: 10Gi
+    storageClass: local-path
+  modelCache:
+    size: 10Gi
+    storageClass: local-path

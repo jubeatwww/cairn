@@ -20,12 +20,13 @@ Host-level setup (OS, networking, firewall, k3s install flags) is out of scope f
 ```
 site.yaml           gitignored site settings: DNS zones, hostnames, IPs, NAS, Zigbee device, timezone; shape: site.example.yaml
 site.secret.yaml    gitignored secrets (the Gandi PAT); template: site.secret.example.yaml
-charts/cluster/     local chart: Let's Encrypt ClusterIssuers, Gandi DNS-01 credentials, Traefik settings
+charts/cluster/     local chart: Let's Encrypt ClusterIssuers, Gandi DNS-01 credentials, Traefik settings,
+                    the StorageClass lvm
 charts/home/        local chart: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup
 charts/immich/      local chart: Immich, public, with the photo library on the NAS
 charts/monitoring/  local chart: Grafana's LAN-only Ingress, for the monitoring stack in helm/
 helm/<release>/     third-party charts: values.yaml + install.sh (cert-manager, the Gandi webhook,
-                    kube-prometheus-stack, Loki, Alloy)
+                    OpenEBS LVM LocalPV, kube-prometheus-stack, Loki, Alloy)
 scripts/            helpers you run by hand: configure, apply, Gandi setup, restore
 ```
 
@@ -40,7 +41,7 @@ scripts/apply.sh --dry-run   # validate the local charts against the cluster, ch
 scripts/apply.sh             # install or upgrade everything
 ```
 
-It runs the third-party releases in `helm/` first, in dependency order: cert-manager and its Gandi webhook (their CRDs back the ClusterIssuers and Certificates), then kube-prometheus-stack (ServiceMonitor CRDs), Loki and Alloy. Then the local charts: `charts/cluster` with `site.yaml` and `site.secret.yaml`, and `charts/home`, `charts/immich` and `charts/monitoring` with `site.yaml`. For the kubeconfig it uses `$KUBECONFIG`, then `~/.kube/config`, then k3s's root-only `/etc/rancher/k3s/k3s.yaml` (run it with sudo).
+It installs in dependency order: cert-manager and its Gandi webhook (their CRDs back the ClusterIssuers and Certificates), OpenEBS LVM LocalPV, then `charts/cluster` with `site.yaml` and `site.secret.yaml` (the ClusterIssuers, and the StorageClass `lvm` the monitoring volumes use). Then kube-prometheus-stack (ServiceMonitor CRDs), Loki and Alloy, and last `charts/home`, `charts/immich` and `charts/monitoring` with `site.yaml`. A dry run skips the releases in `helm/`. For the kubeconfig it uses `$KUBECONFIG`, then `~/.kube/config`, then k3s's root-only `/etc/rancher/k3s/k3s.yaml` (run it with sudo).
 
 To upgrade an app, bump its image in `charts/home/values.yaml` and run `scripts/apply.sh`.
 
@@ -68,6 +69,7 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
    ufw allow from <lanCidr> to any port 21064 proto tcp comment 'HomeKit Bridge'
    ufw allow from <lanCidr> to any port 5353 proto udp comment 'mDNS'
    ```
+   Leave unallocated space in an LVM volume group (`lvm.volumeGroup`) for the size-capped volumes, at least 70 GiB with the sizes in this repo (see [Storage](#storage)). Ubuntu's installer does that by default: it gives the root logical volume only part of the disk.
 3. Optional: give your user the kubeconfig so the scripts don't need sudo:
    ```sh
    mkdir -p ~/.kube && sudo install -m 600 -o "$USER" -g "$USER" /etc/rancher/k3s/k3s.yaml ~/.kube/config
@@ -126,8 +128,8 @@ Run the port-forward on a computer whose kubectl reaches the cluster (the node's
 
 Everything runs in namespace `monitoring`:
 
-- `helm/kube-prometheus-stack`: Prometheus (15 days, at most 18 GB), Alertmanager, Grafana, node-exporter and kube-state-metrics. Scrapes of etcd, the scheduler, the controller-manager and kube-proxy are off: k3s runs them inside its own process without exposing their metrics. Prometheus picks up ServiceMonitors, PodMonitors and rules from every namespace.
-- `helm/loki`: Loki as a single binary on the node's disk, keeping 14 days of logs.
+- `helm/kube-prometheus-stack`: Prometheus (15 days, at most 18 GB, on a 20 GiB volume), Alertmanager, Grafana, node-exporter and kube-state-metrics. Scrapes of etcd, the scheduler, the controller-manager and kube-proxy are off: k3s runs them inside its own process without exposing their metrics. Prometheus picks up ServiceMonitors, PodMonitors and rules from every namespace.
+- `helm/loki`: Loki as a single binary on a 10 GiB volume, keeping 14 days of logs. It takes at most 100 KB/s, so a pod stuck in a log loop can't fill the volume quickly.
 - `helm/alloy`: Grafana Alloy, shipping every pod's logs to Loki through the Kubernetes API.
 - `charts/monitoring`: Grafana's LAN-only Ingress at `grafana.hostname` from `site.yaml`.
 
@@ -138,6 +140,20 @@ kubectl -n monitoring get secret kube-prometheus-stack-grafana -o jsonpath='{.da
 ```
 
 Helm installs kube-prometheus-stack's CRDs only on the first install. After bumping its version, apply the new CRDs first, as its upgrade notes describe.
+
+## Storage
+
+Two StorageClasses, both on the node's disk:
+
+- `lvm` (`charts/cluster`, provisioned by `helm/lvm-localpv`): each volume is an LVM logical volume of exactly its requested size, in the volume group `lvm.volumeGroup` from `site.yaml`. The size is a hard cap: past it, writes fail with "no space left" and the root filesystem isn't touched. For volumes that keep growing: Prometheus (20 GiB), Loki (10 GiB), Immich's thumbnails and encoded videos (40 GiB).
+- `local-path` (k3s's default): a directory on the root filesystem. The requested size is neither enforced nor reserved. For the small volumes: Home Assistant, Zigbee2MQTT, Grafana, Immich's Postgres and model cache.
+
+The `lvm` volumes can only use the volume group's unallocated space. Volumes grow online, without restarting anything:
+
+- Immich: raise `storage.data.size` in `charts/immich/values.yaml` and run `scripts/apply.sh`.
+- Prometheus, Loki: a StatefulSet doesn't resize the PVCs it already made, so patch the PVC, e.g. `kubectl -n monitoring patch pvc storage-loki-0 -p '{"spec":{"resources":{"requests":{"storage":"20Gi"}}}}'`. Then raise the size in `helm/<release>/values.yaml` too, so a rebuild gets the same. Loki's upgrade fails on that change (a StatefulSet can't change its volume template), so first delete the StatefulSet alone: `kubectl -n monitoring delete statefulset loki --cascade=orphan` (the pod keeps running), then run `helm/loki/install.sh`. Prometheus's operator recreates its StatefulSet by itself (Prometheus restarts).
+
+When the volume group runs out, it needs more space from the host: a new disk added to the group, or a smaller root logical volume. Shrinking root has to happen offline (ext4 can grow while mounted but not shrink), e.g. from a live USB: `e2fsck -f`, then `lvreduce --resizefs`. Back up first.
 
 ## Secrets
 

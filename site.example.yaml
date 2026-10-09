@@ -35,6 +35,11 @@ zigbee:
   # zstack for TI chips (CC2652, CC2530). Other chips: see Zigbee2MQTT's adapter docs.
   adapter: zstack
 
+lvm:
+  # LVM volume group on the node for the size-capped volumes (StorageClass lvm). Its unallocated
+  # space is all they can use. Ubuntu's installer names it ubuntu-vg.
+  volumeGroup: ubuntu-vg
+
 homeAssistant:
   # LAN only: its DNS record points at network.nodeIp.
   hostname: ha.example.com

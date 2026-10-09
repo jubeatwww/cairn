@@ -9,7 +9,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: local-path
+  storageClassName: {{ .Values.storage.postgres.storageClass }}
   resources:
     requests:
-      storage: {{ .Values.storage.postgres }}
+      storage: {{ .Values.storage.postgres.size }}

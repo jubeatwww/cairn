@@ -41,7 +41,7 @@ spec:
               path: /api/server/ping
               port: http
           volumeMounts:
-            - name: upload
+            - name: data
               mountPath: /data
             # Add it in Immich as an external library with the import path /mnt/library.
             # Mounted read-write; the NAS export decides. It's read-only there, and opened only
@@ -49,9 +49,9 @@ spec:
             - name: library
               mountPath: /mnt/library
       volumes:
-        - name: upload
+        - name: data
           persistentVolumeClaim:
-            claimName: immich-upload
+            claimName: immich-data
         - name: library
           nfs:
             server: {{ required "nas.server is required (site.yaml)" .Values.nas.server }}

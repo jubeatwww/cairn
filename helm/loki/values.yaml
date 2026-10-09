@@ -20,6 +20,10 @@ loki:
           period: 24h
   limits_config:
     retention_period: 336h  # 14 days
+    # A pod stuck in a log loop must not fill the volume: past this rate Alloy's pushes get 429
+    # and it retries later. Normal traffic is a few KB/s.
+    ingestion_rate_mb: 0.1
+    ingestion_burst_size_mb: 1
   compactor:
     retention_enabled: true
     delete_request_store: filesystem
@@ -27,7 +31,9 @@ loki:
 singleBinary:
   replicas: 1
   persistence:
-    storageClass: local-path
+    # Capped at its size (charts/cluster, lvmStorageClass). A StatefulSet can't change its
+    # volumes in place: changing the class means deleting the StatefulSet and the PVC.
+    storageClass: lvm
     size: 10Gi
 
 # The other deployment modes' components, caches and helpers: not needed for a single binary.

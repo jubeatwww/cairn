@@ -24,7 +24,7 @@ defaultRules:
 prometheus:
   prometheusSpec:
     retention: 15d
-    # Stop well before the volume fills up.
+    # Stop well before the volume fills up: past its size, writes fail.
     retentionSize: 18GB
     # Pick up ServiceMonitors, PodMonitors, Probes, ScrapeConfigs and rules from every namespace,
     # not only the ones labelled for this release.
@@ -36,7 +36,9 @@ prometheus:
     storageSpec:
       volumeClaimTemplate:
         spec:
-          storageClassName: local-path
+          # Capped at its size (charts/cluster, lvmStorageClass). A StatefulSet can't change its
+          # volumes in place: changing the class means deleting the StatefulSet and the PVC.
+          storageClassName: lvm
           accessModes:
             - ReadWriteOnce
           resources:

@@ -9,7 +9,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: local-path
+  storageClassName: {{ .Values.storage.modelCache.storageClass }}
   resources:
     requests:
-      storage: {{ .Values.storage.modelCache }}
+      storage: {{ .Values.storage.modelCache.size }}
