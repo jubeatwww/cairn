@@ -1,6 +1,6 @@
 {{/* Immich's public hostname, e.g. immich.example.com. */}}
 {{- define "immich.host" -}}
-{{ required "immich.host is required (site.yaml)" .Values.immich.host }}.{{ required "domain is required (site.yaml)" .Values.domain }}
+{{ required "immich.hostname is required (site.yaml)" .Values.immich.hostname }}
 {{- end }}
 
 {{/* Settings the server and the database share. */}}

@@ -1,10 +1,16 @@
 # Example site.yaml: copy it to site.yaml (gitignored) and fill in, or run scripts/configure.py.
 # Placeholder values only. The real ones describe a home network and stay out of the public repo.
 
-# Public DNS zone on Gandi LiveDNS. Every host is <name>.<domain> with its own Let's Encrypt cert.
-domain: example.com
 # Let's Encrypt account email.
 acmeEmail: you@example.com
+# How cert-manager proves control of each DNS zone, by solver name (charts/cluster/values.yaml):
+#   gandi   DNS-01 through the Gandi LiveDNS API (site.secret.yaml: gandi.pat). Allows wildcards.
+#   http01  HTTP-01 through Traefik on port 80. The hostname must already resolve to this node.
+acme:
+  zones:
+    example.com: gandi
+  # Every zone not listed above.
+  defaultSolver: http01
 timezone: Etc/UTC
 # The same zone in POSIX form, for images without tzdata (the backup job).
 timezonePosix: UTC0
@@ -30,11 +36,11 @@ zigbee:
   adapter: zstack
 
 homeAssistant:
-  # Served at https://<host>.<domain>, LAN only.
-  host: ha
+  # LAN only: its DNS record points at network.nodeIp.
+  hostname: ha.example.com
 
 immich:
-  # Public at https://<host>.<domain>, so albums can be shared.
-  host: immich
-  # NFS export on nas.server with the photo library. Mounted read-only as an external library.
+  # Public, so albums can be shared.
+  hostname: immich.example.com
+  # NFS export on nas.server with the photo library, mounted as an external library.
   libraryPath: /volume1/photos

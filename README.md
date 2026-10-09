@@ -18,7 +18,7 @@ Host-level setup (OS, networking, firewall, k3s install flags) is out of scope f
 ## Layout
 
 ```
-site.yaml           gitignored site settings: domain, IPs, NAS, Zigbee device, timezone; shape: site.example.yaml
+site.yaml           gitignored site settings: DNS zones, hostnames, IPs, NAS, Zigbee device, timezone; shape: site.example.yaml
 site.secret.yaml    gitignored secrets (the Gandi PAT); template: site.secret.example.yaml
 charts/cluster/     local chart: Let's Encrypt ClusterIssuers, Gandi DNS-01 credentials, Traefik settings
 charts/home/        local chart: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup
@@ -77,11 +77,23 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
 
 ## TLS
 
-cert-manager issues Let's Encrypt certificates through two ClusterIssuers, `letsencrypt-staging` and `letsencrypt-prod`. Both use DNS-01 on Gandi LiveDNS (so wildcards work) via `cert-manager-webhook-gandi`, authenticated with a Gandi Personal Access Token.
+cert-manager issues Let's Encrypt certificates through the ClusterIssuers in `charts/cluster` (`issuers` in its `values.yaml`: `letsencrypt-staging` and `letsencrypt-prod`). Every Ingress, public or LAN-only, gets its own certificate: the annotation `cert-manager.io/cluster-issuer: letsencrypt-prod` and a `tls:` section with the host and a `secretName`.
 
-Every Ingress, public or LAN-only, gets its own certificate: the annotation `cert-manager.io/cluster-issuer: letsencrypt-prod` and a `tls:` section with the host and a `secretName`.
+How each domain is validated is set per DNS zone in `site.yaml`, by solver name (`solvers` in `charts/cluster/values.yaml`):
 
-The PAT expires. Before it does, create a new one in Gandi and run `scripts/setup-gandi-dns01.sh` again. The script checks the token, updates `site.secret.yaml` and the Secret, and proves issuance with a staging certificate. To check domains other than `site.yaml`'s, pass them as arguments.
+```yaml
+acme:
+  zones:
+    example.com: gandi      # DNS-01 through the Gandi API; allows wildcards
+  defaultSolver: http01     # every other zone: HTTP-01 on port 80
+```
+
+- `gandi`: DNS-01 via `cert-manager-webhook-gandi`, authenticated with a Gandi Personal Access Token (`site.secret.yaml`). Works for any hostname in the zone, LAN-only ones included.
+- `http01`: for zones whose DNS has no API (e.g. a domain registered at Wix). The hostname must already resolve to this node, and port 80 must reach Traefik. Let's Encrypt follows Traefik's HTTP-to-HTTPS redirect, and the challenge is answered over HTTPS.
+
+A domain on another DNS provider with an API needs a new entry under `solvers` (any cert-manager ACME solver) and its zone mapped to it in `site.yaml`; the templates don't change.
+
+The PAT expires. Before it does, create a new one in Gandi and run `scripts/setup-gandi-dns01.sh` again. The script checks the token, updates `site.secret.yaml` and the Secret, and proves issuance with a staging certificate. It checks the zones that use `gandi`; pass domains as arguments to check others.
 
 ## Backups
 
@@ -92,7 +104,7 @@ The PAT expires. Before it does, create a new one in Gandi and run `scripts/setu
 
 ## Immich
 
-`charts/immich` runs Immich publicly at `https://<immich.host>.<domain>`, so albums can be shared with people outside the LAN. Its own data (uploads, thumbnails, encoded videos, nightly database dumps) and Postgres live on the node's disk. The photos stay on the NAS: the export `immich.libraryPath` is mounted at `/mnt/library`, and the NAS keeps that export read-only. In Immich, add it under Administration > External Libraries with the import path `/mnt/library`, and set Administration > Settings > Server > External domain to the public URL so share links point there.
+`charts/immich` runs Immich publicly at `https://<immich.hostname>`, so albums can be shared with people outside the LAN. Its own data (uploads, thumbnails, encoded videos, nightly database dumps) and Postgres live on the node's disk. The photos stay on the NAS: the export `immich.libraryPath` is mounted at `/mnt/library`, and the NAS keeps that export read-only. In Immich, add it under Administration > External Libraries with the import path `/mnt/library`, and set Administration > Settings > Server > External domain to the public URL so share links point there.
 
 **First install.** The first visitor to a fresh Immich becomes its admin, so it starts without an Ingress (and so without a certificate that would announce the hostname in the CT logs). Create the admin through a tunnel, then make it public:
 

@@ -14,4 +14,4 @@ spec:
   storageClassName: local-path
   resources:
     requests:
-      storage: 1Gi
+      storage: {{ .Values.storage.zigbee2mqtt }}

@@ -1,7 +1,14 @@
-{{- $servers := dict
-  "letsencrypt-staging" "https://acme-staging-v02.api.letsencrypt.org/directory"
-  "letsencrypt-prod" "https://acme-v02.api.letsencrypt.org/directory" }}
-{{- range $name, $server := $servers }}
+{{- $acme := .Values.acme | default dict }}
+{{- $zones := $acme.zones | default dict }}
+{{- if and (not $zones) (not $acme.defaultSolver) }}
+{{- fail "acme.zones or acme.defaultSolver is required (site.yaml)" }}
+{{- end }}
+{{- /* Group the zones by solver, so each solver gets one entry with a dnsZones selector. */}}
+{{- $bySolver := dict }}
+{{- range $zone, $solver := $zones }}
+{{- $_ := set $bySolver $solver (append (get $bySolver $solver | default list) $zone) }}
+{{- end }}
+{{- range $name, $server := .Values.issuers }}
 ---
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -14,13 +21,15 @@ spec:
     privateKeySecretRef:
       name: {{ $name }}-account-key
     solvers:
-      - dns01:
-          webhook:
-            # Must match groupName in helm/cert-manager-webhook-gandi/values.yaml.
-            groupName: acme.bwolf.me
-            solverName: gandi
-            config:
-              patSecretRef:
-                name: gandi-credentials
-                key: pat
+      {{- range $solver := keys $bySolver | sortAlpha }}
+      {{- $spec := required (printf "acme.zones uses unknown solver %q (see solvers in charts/cluster/values.yaml)" $solver) (index $.Values.solvers $solver) }}
+      - selector:
+          dnsZones: {{ index $bySolver $solver | sortAlpha | toJson }}
+        {{- toYaml $spec | nindent 8 }}
+      {{- end }}
+      {{- with $acme.defaultSolver }}
+      {{- $spec := required (printf "acme.defaultSolver is unknown solver %q (see solvers in charts/cluster/values.yaml)" .) (index $.Values.solvers .) }}
+      # Every other zone.
+      - {{- toYaml $spec | nindent 8 }}
+      {{- end }}
 {{- end }}

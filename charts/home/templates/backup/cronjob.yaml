@@ -1,5 +1,5 @@
 # Nightly backup of this namespace's state to the NAS (site.yaml: nas), one directory per day,
-# kept for 14 days:
+# kept for backup.keepDays (values.yaml):
 #   zigbee2mqtt.tar.gz     network key, coordinator backup, paired devices
 #   home-assistant.tar.gz  .storage (users, areas, integrations), automations, blueprints;
 #                          not the history database, logs or caches
@@ -11,7 +11,7 @@ metadata:
   name: backup
   namespace: {{ .Release.Namespace }}
 spec:
-  schedule: "0 4 * * *"
+  schedule: {{ .Values.backup.schedule | quote }}
   timeZone: {{ required "timezone is required (site.yaml)" .Values.timezone }}
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
@@ -40,7 +40,7 @@ spec:
                   tar -czf "$dest/home-assistant.tar.gz" -C /data/home-assistant \
                     --exclude='./home-assistant_v2.db*' --exclude='./home-assistant.log*' \
                     --exclude=./deps --exclude=./tts --exclude=./backups .
-                  find /backup -mindepth 1 -maxdepth 1 -type d -name '20??-??-??' -mtime +14 -exec rm -rf {} +
+                  find /backup -mindepth 1 -maxdepth 1 -type d -name '20??-??-??' -mtime +{{ int .Values.backup.keepDays }} -exec rm -rf {} +
                   ls -l "$dest"
               volumeMounts:
                 - name: zigbee2mqtt

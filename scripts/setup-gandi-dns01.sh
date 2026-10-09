@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Let's Encrypt DNS-01 via Gandi LiveDNS: set up, rotate the PAT, or check a new domain.
 #
-#   scripts/setup-gandi-dns01.sh [domain...]      default: `domain` from site.yaml
+#   scripts/setup-gandi-dns01.sh [domain...]      default: site.yaml's acme.zones that use gandi
 #
 # Prompts for a Gandi Personal Access Token, checks it can manage every domain, writes it to the
 # gitignored site.secret.yaml, installs cert-manager, the Gandi webhook and charts/cluster, then
@@ -29,9 +29,11 @@ as=()
 k() { "${as[@]}" kubectl "$@"; }
 
 if (( $# == 0 )); then
-  site_domain=$(python3 -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["domain"])' "$REPO/site.yaml") ||
-    die "讀不到 site.yaml 的 domain（需要 python3-yaml），或改成直接帶網域參數"
-  set -- "$site_domain"
+  gandi_zones=$(python3 -c 'import sys, yaml; z = (yaml.safe_load(open(sys.argv[1])).get("acme") or {}).get("zones") or {}; print(" ".join(k for k, v in z.items() if v == "gandi"))' "$REPO/site.yaml") ||
+    die "讀不到 site.yaml 的 acme.zones（需要 python3-yaml），或改成直接帶網域參數"
+  [[ -n $gandi_zones ]] || die "site.yaml 的 acme.zones 裡沒有用 gandi 的 zone，請直接帶網域參數"
+  # shellcheck disable=SC2086
+  set -- $gandi_zones
 fi
 domains=()
 for d in "$@"; do

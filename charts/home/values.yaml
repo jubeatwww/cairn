@@ -7,6 +7,20 @@ images:
   # bash, GNU tar, find: used by the backup and restore jobs.
   tools: debian:trixie-20260918-slim
 
+# ClusterIssuer for the Ingress certificates (charts/cluster, issuers).
+certIssuer: letsencrypt-prod
+
+backup:
+  # Cron schedule, in site.yaml's timezone.
+  schedule: "0 4 * * *"
+  # Days of backups kept on the NAS.
+  keepDays: 14
+
+# Requested sizes for the local-path volumes (local-path doesn't enforce them).
+storage:
+  homeAssistant: 5Gi
+  zigbee2mqtt: 1Gi
+
 # Set only by scripts/restore-home.sh, which renders templates/backup/restore-job.yaml on its own.
 restore:
   date: ""

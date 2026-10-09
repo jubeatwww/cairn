@@ -1,7 +1,14 @@
-# - externalTrafficPolicy Local: preserve client source IPs so ipAllowList middlewares see the
-#   real address. With the default (Cluster), kube-proxy masquerades external traffic.
-# - Redirect HTTP to HTTPS, for public hosts like Immich.
-# - readTimeout: Traefik v3 cuts request bodies off after 60s, too short for large video uploads.
+{{- /* Settings are documented in values.yaml (traefik). */ -}}
+{{- $t := .Values.traefik }}
+{{- $values := dict "service" (dict "spec" (dict "externalTrafficPolicy" $t.externalTrafficPolicy)) }}
+{{- $ports := dict }}
+{{- if $t.redirectToHttps }}
+{{- $_ := set $ports "web" (dict "http" (dict "redirections" (dict "entryPoint" (dict "to" "websecure" "scheme" "https" "permanent" true)))) }}
+{{- end }}
+{{- with $t.readTimeout }}
+{{- $_ := set $ports "websecure" (dict "transport" (dict "respondingTimeouts" (dict "readTimeout" .))) }}
+{{- end }}
+{{- if $ports }}{{ $_ := set $values "ports" $ports }}{{ end }}
 apiVersion: helm.cattle.io/v1
 kind: HelmChartConfig
 metadata:
@@ -9,18 +16,4 @@ metadata:
   namespace: kube-system
 spec:
   valuesContent: |-
-    service:
-      spec:
-        externalTrafficPolicy: Local
-    ports:
-      web:
-        http:
-          redirections:
-            entryPoint:
-              to: websecure
-              scheme: https
-              permanent: true
-      websecure:
-        transport:
-          respondingTimeouts:
-            readTimeout: 600s
+    {{- toYaml $values | nindent 4 }}

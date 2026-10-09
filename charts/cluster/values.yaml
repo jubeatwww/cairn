@@ -1,1 +1,40 @@
-# No defaults: values come from site.yaml and site.secret.yaml at the repo root (scripts/apply.sh).
+# Cluster-wide defaults. Site settings (acme.zones, acmeEmail) come from site.yaml at the repo root,
+# secrets from site.secret.yaml (scripts/apply.sh).
+
+# One ClusterIssuer per entry, named by the key. Ingresses pick one with
+# cert-manager.io/cluster-issuer.
+issuers:
+  letsencrypt-staging: https://acme-staging-v02.api.letsencrypt.org/directory
+  letsencrypt-prod: https://acme-v02.api.letsencrypt.org/directory
+
+# Ways to prove control of a DNS zone, by name. site.yaml's acme.zones maps each zone to one of
+# these, and acme.defaultSolver covers every other zone. Each value is a cert-manager ACME solver.
+solvers:
+  # DNS-01 through the Gandi LiveDNS API. Allows wildcards. Needs gandi.pat in site.secret.yaml.
+  gandi:
+    dns01:
+      webhook:
+        # Must match groupName in helm/cert-manager-webhook-gandi/values.yaml.
+        groupName: acme.bwolf.me
+        solverName: gandi
+        config:
+          patSecretRef:
+            name: gandi-credentials
+            key: pat
+  # HTTP-01 through Traefik on port 80. For zones whose DNS has no API; the hostname must
+  # already resolve to this node. No wildcards.
+  http01:
+    http01:
+      ingress:
+        ingressClassName: traefik
+
+# k3s's bundled Traefik, set through a HelmChartConfig.
+traefik:
+  # Local keeps client source IPs, so ipAllowList middlewares see the real address.
+  externalTrafficPolicy: Local
+  # Redirect HTTP to HTTPS, every host. HTTP-01 still works: Let's Encrypt follows the redirect,
+  # and cert-manager's challenge routers answer on HTTPS too (k3s turns TLS on for every router
+  # on websecure). Don't lower the redirect's priority: Ingress routers also serve plain HTTP.
+  redirectToHttps: true
+  # Traefik v3 cuts request bodies off after 60s by default, too short for large uploads (Immich).
+  readTimeout: 600s

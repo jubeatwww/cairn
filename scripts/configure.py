@@ -103,9 +103,6 @@ def valid_adapter(v):
     return None if v in ADAPTERS else "可用的值：" + "、".join(ADAPTERS)
 
 
-def valid_label(v):
-    return None if re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", v) else "只能用小寫英數和 -"
-
 
 def ask(label, default, validate=None):
     while True:
@@ -126,6 +123,23 @@ def ask(label, default, validate=None):
         return v
 
 
+SOLVERS = ("gandi", "http01")  # names from charts/cluster/values.yaml, solvers
+
+
+def valid_hostname(v):
+    return None if valid_domain(v) is None and v.count(".") >= 2 else "要是完整的主機名稱，例如 ha.example.com"
+
+
+def valid_zones(v):
+    zones = [z.strip() for z in v.split(",") if z.strip()]
+    bad = [z for z in zones if valid_domain(z)]
+    return f"不是合法的網域：{', '.join(bad)}" if bad else None
+
+
+def valid_solver(v):
+    return None if v in SOLVERS else "可用的值：" + "、".join(SOLVERS)
+
+
 def main():
     cur = yaml.safe_load(OUT.read_text()) if OUT.exists() else {}
 
@@ -135,11 +149,19 @@ def main():
             d = d.get(k) if isinstance(d, dict) else None
         return d
 
+    # Defaults from the older layout (a single `domain`, and <host>.<domain> hostnames).
+    old_domain = get("domain")
+    zones = get("acme", "zones") or ({old_domain: "gandi"} if old_domain else {})
+    old_host = lambda app, default: f"{get(app, 'host') or default}.{old_domain}" if old_domain else None  # noqa: E731
+
     ip, lan = detect_lan()
 
     print(f"設定 {OUT}：直接按 Enter 採用 [ ] 裡的值。\n")
-    domain = ask("網域（Gandi LiveDNS 上的 zone）", get("domain"), valid_domain)
     email = ask("Let's Encrypt 帳號 email", get("acmeEmail"), valid_email)
+    print("憑證的驗證方式：gandi = DNS-01（Gandi API，可簽 wildcard）；http01 = HTTP-01（主機名稱要已經指到這台 node）")
+    gandi = ask("用 gandi 驗證的 DNS zone（逗號分隔）", ", ".join(z for z, v in zones.items() if v == "gandi"), valid_zones)
+    default_solver = ask("其他 zone 的驗證方式", get("acme", "defaultSolver") or "http01", valid_solver)
+    gandi_zones = [z.strip() for z in gandi.split(",") if z.strip()]
     tz = ask("時區", get("timezone") or detect_timezone(), valid_tz)
     tz_posix = ask("同一時區的 POSIX 格式", posix_tz(tz) or get("timezonePosix"), valid_posix_tz)
 
@@ -164,11 +186,12 @@ def main():
         print(f"  注意：{device} 目前不存在（還沒插上？）")
     adapter = ask("Zigbee adapter 類型", get("zigbee", "adapter") or "zstack", valid_adapter)
 
-    ha_host = ask(f"\nHome Assistant 的主機名稱（<名稱>.{domain}，只限內網）", get("homeAssistant", "host") or "ha", valid_label)
-    immich_host = ask(f"Immich 的主機名稱（<名稱>.{domain}，公開）", get("immich", "host") or "immich", valid_label)
-    library = ask(f"照片庫在 NAS（{nas}）上的 export 路徑，Immich 會唯讀掛載", get("immich", "libraryPath"), valid_abs_path)
+    ha_host = ask("\nHome Assistant 的主機名稱（只限內網）", get("homeAssistant", "hostname") or old_host("homeAssistant", "ha"), valid_hostname)
+    immich_host = ask("Immich 的主機名稱（公開）", get("immich", "hostname") or old_host("immich", "immich"), valid_hostname)
+    library = ask(f"照片庫在 NAS（{nas}）上的 export 路徑", get("immich", "libraryPath"), valid_abs_path)
 
     q = lambda v: yaml.safe_dump(v, default_flow_style=True).strip().removesuffix("\n...")  # noqa: E731
+    zone_lines = "".join(f"    {q(z)}: gandi\n" for z in gandi_zones) or "    {}\n"
     text = f"""\
 # Site-specific settings for this cluster: the "profile" the charts in charts/ are rendered with.
 # Moving to another machine, network or domain means editing this file, not the templates.
@@ -176,10 +199,15 @@ def main():
 # scripts/configure.py rewrites it from questions; site.example.yaml shows the shape.
 # Secrets go in site.secret.yaml (gitignored too; template: site.secret.example.yaml).
 
-# Public DNS zone on Gandi LiveDNS. Every host is <name>.<domain> with its own Let's Encrypt cert.
-domain: {q(domain)}
 # Let's Encrypt account email.
 acmeEmail: {q(email)}
+# How cert-manager proves control of each DNS zone, by solver name (charts/cluster/values.yaml):
+#   gandi   DNS-01 through the Gandi LiveDNS API (site.secret.yaml: gandi.pat). Allows wildcards.
+#   http01  HTTP-01 through Traefik on port 80. The hostname must already resolve to this node.
+acme:
+  zones:
+{zone_lines}  # Every zone not listed above.
+  defaultSolver: {q(default_solver)}
 timezone: {q(tz)}
 # The same zone in POSIX form, for images without tzdata (the backup job).
 timezonePosix: {q(tz_posix)}
@@ -205,13 +233,13 @@ zigbee:
   adapter: {q(adapter)}
 
 homeAssistant:
-  # Served at https://<host>.<domain>, LAN only.
-  host: {q(ha_host)}
+  # LAN only: its DNS record points at network.nodeIp.
+  hostname: {q(ha_host)}
 
 immich:
-  # Public at https://<host>.<domain>, so albums can be shared.
-  host: {q(immich_host)}
-  # NFS export on nas.server with the photo library. Mounted read-only as an external library.
+  # Public, so albums can be shared.
+  hostname: {q(immich_host)}
+  # NFS export on nas.server with the photo library, mounted as an external library.
   libraryPath: {q(library)}
 """
     old = OUT.read_text() if OUT.exists() else ""
