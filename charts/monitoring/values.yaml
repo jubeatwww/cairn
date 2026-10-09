@@ -1,5 +1,5 @@
 # Chart defaults. Site settings (grafana.hostname, network.lanCidr) come from site.yaml at the repo
-# root (scripts/apply.sh).
+# root, the Discord webhook from site.secret.yaml (scripts/apply.sh).
 
 # ClusterIssuer for the Ingress certificate (charts/cluster, issuers).
 certIssuer: letsencrypt-prod
@@ -8,3 +8,9 @@ certIssuer: letsencrypt-prod
 grafanaService:
   name: kube-prometheus-stack-grafana
   port: 80
+
+# The Secret holding the Discord webhook URL. Alertmanager mounts it and reads the key as a file:
+# both must match helm/kube-prometheus-stack/values.yaml (alertmanagerSpec.secrets, webhook_url_file).
+discordSecret:
+  name: alertmanager-discord
+  key: webhook-url

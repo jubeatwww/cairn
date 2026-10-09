@@ -23,7 +23,7 @@ esac
 
 [[ -f site.yaml ]] || { echo "site.yaml is missing: run scripts/configure.py (shape: site.example.yaml)" >&2; exit 1; }
 [[ -f site.secret.yaml ]] || {
-  echo "site.secret.yaml is missing: run scripts/setup-gandi-dns01.sh, or copy site.secret.example.yaml and fill it in" >&2
+  echo "site.secret.yaml is missing: run scripts/setup-gandi-dns01.sh and scripts/setup-discord-alerts.sh, or copy site.secret.example.yaml and fill it in" >&2
   exit 1
 }
 
@@ -60,6 +60,6 @@ helm upgrade --install immich charts/immich --namespace immich --create-namespac
 
 echo "==> charts/monitoring"
 helm upgrade --install monitoring charts/monitoring --namespace monitoring --create-namespace \
-  --values site.yaml --wait --timeout 5m "${dry[@]}" > /dev/null
+  --values site.yaml --values site.secret.yaml --wait --timeout 5m "${dry[@]}" > /dev/null
 
 echo "==> Done${dry:+ (dry run, nothing changed)}"

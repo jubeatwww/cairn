@@ -46,7 +46,7 @@ done
 if [[ -f $SECRET_FILE ]]; then
   read -rsp "貼上 Gandi PAT（直接按 Enter 沿用現有的）: " pat; echo
   if [[ -z $pat ]]; then
-    pat=$(sed -n 's/^  pat: "\(.*\)"$/\1/p' "$SECRET_FILE")
+    pat=$("$REPO/scripts/secret.py" get gandi.pat)
   fi
 else
   read -rsp "貼上 Gandi PAT: " pat; echo
@@ -71,17 +71,9 @@ for d in "${domains[@]}"; do
   esac
 done
 
-# 3. Secret values file: gitignored, readable only by you
+# 3. Secret values file: gitignored, readable only by you. Other secrets in it are kept.
 step "寫入 site.secret.yaml"
-(
-  umask 077
-  cat > "$SECRET_FILE" <<EOF
-# Gitignored. Never commit. Template: site.secret.example.yaml. Written by scripts/setup-gandi-dns01.sh
-gandi:
-  pat: "$pat"
-EOF
-)
-chmod 600 "$SECRET_FILE"
+printf '%s' "$pat" | "$REPO/scripts/secret.py" set gandi.pat
 
 # 4. cert-manager and the webhook first (CRDs), then the chart with the ClusterIssuers and the Secret
 ((${#as[@]} == 0)) || { step "sudo 驗證"; sudo -v; }

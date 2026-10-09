@@ -45,6 +45,33 @@ prometheus:
             requests:
               storage: 20Gi
 
+alertmanager:
+  # Merged into the chart's default config, which keeps its grouping (by namespace), its
+  # inhibit rules, and repeating a firing alert every 12h.
+  config:
+    route:
+      receiver: discord
+      routes:
+        # Always firing, to prove the alerting pipeline works. Nothing to tell anyone.
+        - receiver: "null"
+          matchers:
+            - alertname = "Watchdog"
+    receivers:
+      - name: "null"
+      - name: discord
+        discord_configs:
+          # The Secret from charts/monitoring (discordSecret), mounted through alertmanagerSpec.secrets.
+          - webhook_url_file: /etc/alertmanager/secrets/alertmanager-discord/webhook-url
+            # Shorter than the default, which lists every label of every alert.
+            title: '[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ len .Alerts.Firing }}{{ end }}] {{ .CommonLabels.alertname }}{{ with .GroupLabels.namespace }} · {{ . }}{{ end }}'
+            message: |-
+              {{ range .Alerts }}{{ if eq .Status "firing" }}🔴{{ else }}🟢{{ end }} **{{ .Labels.alertname }}**{{ with .Labels.severity }} ({{ . }}){{ end }}
+              {{ with .Annotations.description }}{{ . }}{{ else }}{{ .Annotations.summary }}{{ end }}
+              {{ end }}
+  alertmanagerSpec:
+    secrets:
+      - alertmanager-discord
+
 grafana:
   # The admin password is generated on first install and kept in the Secret
   # kube-prometheus-stack-grafana (key admin-password).

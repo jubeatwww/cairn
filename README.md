@@ -27,7 +27,7 @@ charts/immich/      local chart: Immich, public, with the photo library on the N
 charts/monitoring/  local chart: Grafana's LAN-only Ingress, for the monitoring stack in helm/
 helm/<release>/     third-party charts: values.yaml + install.sh (cert-manager, the Gandi webhook,
                     OpenEBS LVM LocalPV, kube-prometheus-stack, Loki, Alloy)
-scripts/            helpers you run by hand: configure, apply, Gandi setup, restore
+scripts/            helpers you run by hand: configure, apply, Gandi and Discord setup, restore
 ```
 
 The local charts hold templates only. Every site-specific value comes from `site.yaml`; versions (image tags) live in each chart's `values.yaml`. `scripts/configure.py` writes `site.yaml` from questions, offering the current values or ones detected on the node, so you don't have to edit it by hand.
@@ -76,8 +76,9 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
    ```
 4. Put back your saved `site.yaml`, or run `scripts/configure.py` to write it. Run it as well if the site changed (new IPs, NAS, Zigbee stick...).
 5. `scripts/setup-gandi-dns01.sh`: writes `site.secret.yaml` from a Gandi PAT, installs cert-manager and `charts/cluster`, and proves issuance with a staging certificate.
-6. `scripts/apply.sh`
-7. Restore the home automation state from the NAS: `scripts/restore-home.sh <YYYY-MM-DD>` (see [Backups](#backups)).
+6. `scripts/setup-discord-alerts.sh`: writes the Discord webhook for alerts to `site.secret.yaml` (see [Monitoring](#monitoring)). It installs kube-prometheus-stack too; Prometheus waits for its volume until `scripts/apply.sh` installs LVM LocalPV.
+7. `scripts/apply.sh`
+8. Restore the home automation state from the NAS: `scripts/restore-home.sh <YYYY-MM-DD>` (see [Backups](#backups)).
 
 ## TLS
 
@@ -139,6 +140,8 @@ Grafana comes with Prometheus, Alertmanager and Loki as data sources, and the us
 kubectl -n monitoring get secret kube-prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d
 ```
 
+**Alerts** go to a Discord channel: every alert from kube-prometheus-stack's default rules (a volume filling up, a pod crash-looping, a node running out of memory...), grouped by namespace, again every 12 hours while it keeps firing, and once more when it resolves. Watchdog, which always fires to prove the pipeline works, is not sent. Set up or switch the channel with `scripts/setup-discord-alerts.sh`: it takes the channel's webhook URL (channel settings > Integrations > Webhooks > New Webhook > Copy Webhook URL), checks it, stores it in `site.secret.yaml`, applies it, and sends a test alert. The routing is in `helm/kube-prometheus-stack/values.yaml` (`alertmanager.config`).
+
 Helm installs kube-prometheus-stack's CRDs only on the first install. After bumping its version, apply the new CRDs first, as its upgrade notes describe.
 
 ## Storage
@@ -160,4 +163,5 @@ When the volume group runs out, it needs more space from the host: a new disk ad
 Kubernetes Secrets are base64, not encryption. **Plaintext secrets are never committed.**
 
 - Secret values go in `site.secret.yaml`, which is gitignored (`*.secret.yaml`). `site.secret.example.yaml` next to it lists the keys with placeholder values.
-- `scripts/apply.sh` passes it to `charts/cluster`, which turns it into the Secret. Helm also keeps a copy in its release record, a Secret in `kube-system`.
+- The setup scripts write it through `scripts/secret.py`, which changes one key and keeps the others.
+- `scripts/apply.sh` passes it to `charts/cluster` (the Gandi PAT) and `charts/monitoring` (the Discord webhook), which turn it into Secrets. Helm also keeps a copy in each release record, a Secret in the release's namespace.
