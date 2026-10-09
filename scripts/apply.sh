@@ -33,6 +33,13 @@ else
   helm/cert-manager/install.sh
   echo "==> cert-manager-webhook-gandi"
   helm/cert-manager-webhook-gandi/install.sh
+  # Monitoring next: kube-prometheus-stack brings the ServiceMonitor/PodMonitor CRDs.
+  echo "==> kube-prometheus-stack"
+  helm/kube-prometheus-stack/install.sh
+  echo "==> loki"
+  helm/loki/install.sh
+  echo "==> alloy"
+  helm/alloy/install.sh
 fi
 
 echo "==> charts/cluster"
@@ -46,5 +53,9 @@ helm upgrade --install home charts/home --namespace home --create-namespace \
 echo "==> charts/immich"
 helm upgrade --install immich charts/immich --namespace immich --create-namespace \
   --values site.yaml --wait --timeout 15m "${dry[@]}" > /dev/null
+
+echo "==> charts/monitoring"
+helm upgrade --install monitoring charts/monitoring --namespace monitoring --create-namespace \
+  --values site.yaml --wait --timeout 5m "${dry[@]}" > /dev/null
 
 echo "==> Done${dry:+ (dry run, nothing changed)}"

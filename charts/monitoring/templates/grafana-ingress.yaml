@@ -1,0 +1,27 @@
+{{- $host := required "grafana.hostname is required (site.yaml)" (.Values.grafana | default dict).hostname }}
+# LAN-only: {{ $host }} resolves to the node's LAN IP, and lan-only blocks anything else.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.certIssuer }}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-lan-only@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - {{ $host }}
+      secretName: grafana-tls
+  rules:
+    - host: {{ $host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.grafanaService.name }}
+                port:
+                  number: {{ .Values.grafanaService.port }}

@@ -1,0 +1,62 @@
+# https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
+# Prometheus, Alertmanager, Grafana, node-exporter and kube-state-metrics.
+# Grafana's Ingress lives in charts/monitoring, with the hostname from site.yaml.
+
+# k3s runs etcd, the scheduler, the controller-manager and kube-proxy inside the k3s process and
+# doesn't expose their metrics. Scraping them would only raise "target down" alerts.
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+defaultRules:
+  rules:
+    etcd: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    kubeControllerManager: false
+    kubeProxy: false
+    windows: false
+
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    # Stop well before the volume fills up.
+    retentionSize: 18GB
+    # Pick up ServiceMonitors, PodMonitors, Probes, ScrapeConfigs and rules from every namespace,
+    # not only the ones labelled for this release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 20Gi
+
+grafana:
+  # The admin password is generated on first install and kept in the Secret
+  # kube-prometheus-stack-grafana (key admin-password).
+  defaultDashboardsTimezone: browser
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    size: 2Gi
+    annotations:
+      helm.sh/resource-policy: keep
+  additionalDataSources:
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      # helm/loki: single binary, no gateway.
+      url: http://loki.monitoring.svc.cluster.local:3100

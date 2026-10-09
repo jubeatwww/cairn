@@ -1,0 +1,5 @@
+apiVersion: v2
+name: monitoring
+description: Site glue for the monitoring stack in helm/ (kube-prometheus-stack, Loki, Alloy). Grafana's LAN-only Ingress.
+type: application
+version: 0.1.0

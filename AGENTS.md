@@ -16,7 +16,8 @@ Working notes for agents. Read [README.md](README.md) first for the cluster spec
 
 - `site.yaml`: every site-specific value, each with a comment saying what it's for. It's gitignored; `scripts/configure.py` generates it from questions. A new key goes in four places: `site.yaml`, `site.example.yaml` (placeholder value, same keys), a question plus the file template in `scripts/configure.py` (running it with all defaults must report no changes), and the chart template, referenced with `required "<key> is required (site.yaml)"` so a missing value fails the render with a clear message.
 - `charts/<name>/`: local charts for this cluster, rendered with `site.yaml`.
-  - `charts/cluster/`: cluster-wide pieces. `charts/home/`: the home automation stack in namespace `home`. `charts/immich/`: Immich in namespace `immich`, public.
+  - `charts/cluster/`: cluster-wide pieces. `charts/home/`: the home automation stack in namespace `home`. `charts/immich/`: Immich in namespace `immich`, public. `charts/monitoring/`: site glue (Grafana's Ingress) for the third-party monitoring releases in `helm/`.
+  - When a third-party chart needs site values (a hostname, a CIDR), keep its `helm/<release>/values.yaml` site-free and put the site-dependent objects (Ingress, Middleware) in a local chart instead.
   - `templates/<app>/`: one directory per app, one resource per file, e.g. `deployment.yaml`, `service.yaml`, `ingress.yaml`.
   - Chart defaults that don't depend on the site go in the chart's `values.yaml`, each with a comment: image versions, `certIssuer`, backup schedule and retention, PVC sizes, ACME `issuers` and `solvers`, Traefik settings.
   - Hostnames come from `site.yaml` in full (`ha.example.com`), not built from a domain: apps can live in different DNS zones.

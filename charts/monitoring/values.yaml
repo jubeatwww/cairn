@@ -1,0 +1,10 @@
+# Chart defaults. Site settings (grafana.hostname, network.lanCidr) come from site.yaml at the repo
+# root (scripts/apply.sh).
+
+# ClusterIssuer for the Ingress certificate (charts/cluster, issuers).
+certIssuer: letsencrypt-prod
+
+# Grafana's Service, created by helm/kube-prometheus-stack (release kube-prometheus-stack).
+grafanaService:
+  name: kube-prometheus-stack-grafana
+  port: 80

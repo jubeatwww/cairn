@@ -189,6 +189,7 @@ def main():
     ha_host = ask("\nHome Assistant 的主機名稱（只限內網）", get("homeAssistant", "hostname") or old_host("homeAssistant", "ha"), valid_hostname)
     immich_host = ask("Immich 的主機名稱（公開）", get("immich", "hostname") or old_host("immich", "immich"), valid_hostname)
     library = ask(f"照片庫在 NAS（{nas}）上的 export 路徑", get("immich", "libraryPath"), valid_abs_path)
+    grafana_host = ask("Grafana 的主機名稱（只限內網）", get("grafana", "hostname") or "grafana." + ha_host.split(".", 1)[1], valid_hostname)
 
     q = lambda v: yaml.safe_dump(v, default_flow_style=True).strip().removesuffix("\n...")  # noqa: E731
     zone_lines = "".join(f"    {q(z)}: gandi\n" for z in gandi_zones) or "    {}\n"
@@ -241,6 +242,10 @@ immich:
   hostname: {q(immich_host)}
   # NFS export on nas.server with the photo library, mounted as an external library.
   libraryPath: {q(library)}
+
+grafana:
+  # LAN only: its DNS record points at network.nodeIp.
+  hostname: {q(grafana_host)}
 """
     old = OUT.read_text() if OUT.exists() else ""
     if old == text:

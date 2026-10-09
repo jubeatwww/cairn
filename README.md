@@ -23,7 +23,9 @@ site.secret.yaml    gitignored secrets (the Gandi PAT); template: site.secret.ex
 charts/cluster/     local chart: Let's Encrypt ClusterIssuers, Gandi DNS-01 credentials, Traefik settings
 charts/home/        local chart: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup
 charts/immich/      local chart: Immich, public, with the photo library on the NAS
-helm/<release>/     third-party charts: values.yaml + install.sh (cert-manager, the Gandi webhook)
+charts/monitoring/  local chart: Grafana's LAN-only Ingress, for the monitoring stack in helm/
+helm/<release>/     third-party charts: values.yaml + install.sh (cert-manager, the Gandi webhook,
+                    kube-prometheus-stack, Loki, Alloy)
 scripts/            helpers you run by hand: configure, apply, Gandi setup, restore
 ```
 
@@ -38,7 +40,7 @@ scripts/apply.sh --dry-run   # validate the local charts against the cluster, ch
 scripts/apply.sh             # install or upgrade everything
 ```
 
-It runs `helm/cert-manager` and `helm/cert-manager-webhook-gandi` first (their CRDs back the ClusterIssuers and Certificates), then `charts/cluster` with `site.yaml` and `site.secret.yaml`, then `charts/home` with `site.yaml`. For the kubeconfig it uses `$KUBECONFIG`, then `~/.kube/config`, then k3s's root-only `/etc/rancher/k3s/k3s.yaml` (run it with sudo).
+It runs the third-party releases in `helm/` first, in dependency order: cert-manager and its Gandi webhook (their CRDs back the ClusterIssuers and Certificates), then kube-prometheus-stack (ServiceMonitor CRDs), Loki and Alloy. Then the local charts: `charts/cluster` with `site.yaml` and `site.secret.yaml`, and `charts/home`, `charts/immich` and `charts/monitoring` with `site.yaml`. For the kubeconfig it uses `$KUBECONFIG`, then `~/.kube/config`, then k3s's root-only `/etc/rancher/k3s/k3s.yaml` (run it with sudo).
 
 To upgrade an app, bump its image in `charts/home/values.yaml` and run `scripts/apply.sh`.
 
@@ -95,6 +97,8 @@ A domain on another DNS provider with an API needs a new entry under `solvers` (
 
 The PAT expires. Before it does, create a new one in Gandi and run `scripts/setup-gandi-dns01.sh` again. The script checks the token, updates `site.secret.yaml` and the Secret, and proves issuance with a staging certificate. It checks the zones that use `gandi`; pass domains as arguments to check others.
 
+**A DNS-01 challenge stuck on "not yet propagated".** cert-manager checks the challenge's TXT record through public resolvers (1.1.1.1 and 8.8.8.8, see `helm/cert-manager/values.yaml`) and needs all of them to see it. If one asked before Gandi had published the record, it caches the "doesn't exist" answer for the zone's negative TTL, about 3 hours. Compare what the resolvers return for `_acme-challenge.<hostname>` (TXT) with Gandi's own nameservers. Then either wait, or purge the stale answer: https://one.one.one.one/purge-cache/ for 1.1.1.1, https://dns.google/cache for 8.8.8.8. Renewals start 30 days before expiry, so a few hours' delay there doesn't matter.
+
 ## Backups
 
 `charts/home` runs a CronJob every night at 04:00 that writes `YYYY-MM-DD/zigbee2mqtt.tar.gz` and `YYYY-MM-DD/home-assistant.tar.gz` to the NAS (`nas` in `site.yaml`), keeping 14 days. The Zigbee2MQTT archive holds the network key and paired devices, so restoring it avoids re-pairing everything. The Home Assistant archive holds `.storage` (users, areas, integrations, groups, HomeKit) and the automations, but not the history database.
@@ -117,6 +121,23 @@ scripts/apply.sh                                               # adds the public
 Run the port-forward on a computer whose kubectl reaches the cluster (the node's kubeconfig with `127.0.0.1` replaced by the node's LAN IP). Or run it on the node and tunnel to it, which leaves no cluster credentials on the computer: `ssh -N -L 2283:localhost:2283 <user>@<node>`.
 
 **Editing metadata.** Immich writes edits to tags, descriptions, dates and ratings as `.xmp` sidecars next to the originals, and there's no setting to put them elsewhere. With the export read-only that write fails silently and Immich re-reads the file, so the edit is lost. Before editing, switch the export to read/write on the NAS (the mount in the cluster is already read-write), and back to read-only when done. Keep those sessions short: while writable, deleting an asset for good in Immich (emptying the trash, or its nightly cleanup of items trashed 30+ days ago) also deletes the original on the NAS. Read-only, those deletes fail and the originals stay.
+
+## Monitoring
+
+Everything runs in namespace `monitoring`:
+
+- `helm/kube-prometheus-stack`: Prometheus (15 days, at most 18 GB), Alertmanager, Grafana, node-exporter and kube-state-metrics. Scrapes of etcd, the scheduler, the controller-manager and kube-proxy are off: k3s runs them inside its own process without exposing their metrics. Prometheus picks up ServiceMonitors, PodMonitors and rules from every namespace.
+- `helm/loki`: Loki as a single binary on the node's disk, keeping 14 days of logs.
+- `helm/alloy`: Grafana Alloy, shipping every pod's logs to Loki through the Kubernetes API.
+- `charts/monitoring`: Grafana's LAN-only Ingress at `grafana.hostname` from `site.yaml`.
+
+Grafana comes with Prometheus, Alertmanager and Loki as data sources, and the usual Kubernetes and node dashboards. Log in as `admin`; the password is generated on first install:
+
+```sh
+kubectl -n monitoring get secret kube-prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d
+```
+
+Helm installs kube-prometheus-stack's CRDs only on the first install. After bumping its version, apply the new CRDs first, as its upgrade notes describe.
 
 ## Secrets
 

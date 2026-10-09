@@ -44,3 +44,7 @@ immich:
   hostname: immich.example.com
   # NFS export on nas.server with the photo library, mounted as an external library.
   libraryPath: /volume1/photos
+
+grafana:
+  # LAN only: its DNS record points at network.nodeIp.
+  hostname: grafana.example.com
