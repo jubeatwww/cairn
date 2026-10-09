@@ -24,7 +24,7 @@ charts/cluster/     local chart: Let's Encrypt ClusterIssuers, Gandi DNS-01 cred
 charts/home/        local chart: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup
 charts/immich/      local chart: Immich, public, with the photo library on the NAS
 helm/<release>/     third-party charts: values.yaml + install.sh (cert-manager, the Gandi webhook)
-scripts/            helpers you run by hand: configure, apply, Gandi setup, restore, Immich library rw/ro
+scripts/            helpers you run by hand: configure, apply, Gandi setup, restore
 ```
 
 The local charts hold templates only. Every site-specific value comes from `site.yaml`; versions (image tags) live in each chart's `values.yaml`. `scripts/configure.py` writes `site.yaml` from questions, offering the current values or ones detected on the node, so you don't have to edit it by hand.
@@ -92,7 +92,7 @@ The PAT expires. Before it does, create a new one in Gandi and run `scripts/setu
 
 ## Immich
 
-`charts/immich` runs Immich publicly at `https://<immich.host>.<domain>`, so albums can be shared with people outside the LAN. Its own data (uploads, thumbnails, encoded videos, nightly database dumps) and Postgres live on the node's disk. The photos stay on the NAS: the export `immich.libraryPath` is mounted read-only at `/mnt/library`. In Immich, add it under Administration > External Libraries with the import path `/mnt/library`, and set Administration > Settings > Server > External domain to the public URL so share links point there.
+`charts/immich` runs Immich publicly at `https://<immich.host>.<domain>`, so albums can be shared with people outside the LAN. Its own data (uploads, thumbnails, encoded videos, nightly database dumps) and Postgres live on the node's disk. The photos stay on the NAS: the export `immich.libraryPath` is mounted at `/mnt/library`, and the NAS keeps that export read-only. In Immich, add it under Administration > External Libraries with the import path `/mnt/library`, and set Administration > Settings > Server > External domain to the public URL so share links point there.
 
 **First install.** The first visitor to a fresh Immich becomes its admin, so it starts without an Ingress (and so without a certificate that would announce the hostname in the CT logs). Create the admin through a tunnel, then make it public:
 
@@ -104,12 +104,7 @@ scripts/apply.sh                                               # adds the public
 
 Run the port-forward on a computer whose kubectl reaches the cluster (the node's kubeconfig with `127.0.0.1` replaced by the node's LAN IP). Or run it on the node and tunnel to it, which leaves no cluster credentials on the computer: `ssh -N -L 2283:localhost:2283 <user>@<node>`.
 
-**Editing metadata.** Immich writes edits to tags, descriptions, dates and ratings as `.xmp` sidecars next to the originals, and there's no setting to put them elsewhere. On the read-only mount that write fails silently and Immich re-reads the file, so the edit is lost. Switch the library to writable first (the NAS export must allow writes), and back when done:
-
-```sh
-scripts/immich-library.sh rw
-scripts/immich-library.sh ro     # scripts/apply.sh also leaves it read-only
-```
+**Editing metadata.** Immich writes edits to tags, descriptions, dates and ratings as `.xmp` sidecars next to the originals, and there's no setting to put them elsewhere. With the export read-only that write fails silently and Immich re-reads the file, so the edit is lost. Before editing, switch the export to read/write on the NAS (the mount in the cluster is already read-write), and back to read-only when done. Keep those sessions short: while writable, deleting an asset for good in Immich (emptying the trash, or its nightly cleanup of items trashed 30+ days ago) also deletes the original on the NAS. Read-only, those deletes fail and the originals stay.
 
 ## Secrets
 

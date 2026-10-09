@@ -44,9 +44,10 @@ spec:
             - name: upload
               mountPath: /data
             # Add it in Immich as an external library with the import path /mnt/library.
+            # Mounted read-write; the NAS export decides. It's read-only there, and opened only
+            # for metadata edits (README "Immich").
             - name: library
               mountPath: /mnt/library
-              readOnly: {{ not .Values.libraryWritable }}
       volumes:
         - name: upload
           persistentVolumeClaim:
@@ -55,4 +56,3 @@ spec:
           nfs:
             server: {{ required "nas.server is required (site.yaml)" .Values.nas.server }}
             path: {{ required "immich.libraryPath is required (site.yaml)" .Values.immich.libraryPath }}
-            readOnly: {{ not .Values.libraryWritable }}

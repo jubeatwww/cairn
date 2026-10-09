@@ -12,9 +12,6 @@ images:
 # Ingress there is no certificate either, so the hostname doesn't reach the CT logs early.
 ingress: true
 
-# The external library is mounted read-only. Metadata edits write .xmp sidecars next to the
-# originals; scripts/immich-library.sh rw|ro flips this for those sessions.
-libraryWritable: false
 
 # Requested sizes for the local-path volumes (local-path doesn't enforce them).
 storage:
