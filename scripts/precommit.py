@@ -4,9 +4,9 @@
 `git commit --no-verify`.
 
   leaks     the staged changes contain nothing from the site directory that the examples don't
-            have: no key or value of site.yaml, site.secret.yaml or values/, nor the DNS zones,
-            the LAN prefix or your git email they imply. Names of directories in apps/ and
-            infrastructure/ are fine; anything else is the home network's, or a secret.
+            have: no key or value of site.yaml or values/, no value of site.secret.yaml, nor the
+            DNS zones, the LAN prefix or your git email they imply. Names of directories in apps/
+            and infrastructure/ are fine; anything else is the home network's, or a secret.
   example   site.example.yaml is what scripts/configure.py --example writes
   render    every chart in this repo lints and renders through helmfile with the examples: all
             components on (plus an app on charts/app/examples/web.yaml), and all off
@@ -42,16 +42,17 @@ def fail(name, lines):
         print(f"     {line}")
 
 
-def strings(node, path=""):
-    """(dotted path, string) for every key and scalar value in a YAML tree."""
+def strings(node, path="", keys=True):
+    """(dotted path, string) for every scalar value in a YAML tree, and every key unless keys=False."""
     if isinstance(node, dict):
         for k, v in node.items():
             p = f"{path}.{k}" if path else str(k)
-            yield p, str(k)
-            yield from strings(v, p)
+            if keys:
+                yield p, str(k)
+            yield from strings(v, p, keys)
     elif isinstance(node, list):
         for i, v in enumerate(node):
-            yield from strings(v, f"{path}[{i}]")
+            yield from strings(v, f"{path}[{i}]", keys)
     elif isinstance(node, str):
         yield path, node
 
@@ -69,7 +70,9 @@ def private_tokens():
     files = [SITE / "site.yaml", SITE / "site.secret.yaml", *sorted((SITE / "values").glob("*.yaml"))]
     site = load(SITE / "site.yaml")
     for f in files:
-        for path, s in strings(load(f)):
+        # site.secret.yaml's keys are field names (password, token); the app names among them are
+        # site.yaml's too.
+        for path, s in strings(load(f), keys=f.name != "site.secret.yaml"):
             found.setdefault(s, f"{f.name}: {path}")
     # What the values imply: each DNS zone and its name without the TLD, the LAN's prefix.
     hosts = [s for _, s in strings(site) if re.fullmatch(r"([a-z0-9-]+\.)+[a-z]{2,}", s)]
@@ -145,8 +148,10 @@ def render():
         print("SKIP render: 沒有 helmfile")
         return
     site = load(REPO / "site.example.yaml")
-    on = dict(site, apps={**site.get("apps", {}),
-                          "example-web": {"values": [str(REPO / "charts/app/examples/web.yaml")], "database": {}}})
+    # Entries naming an app outside the repo (a plugin, or app: /...) have nothing here to render.
+    apps = {n: e for n, e in (site.get("apps") or {}).items()
+            if "app" not in (e or {}) or (REPO / "apps" / str(e["app"])).is_dir()}
+    on = dict(site, apps={**apps, "example-web": {"values": [str(REPO / "charts/app/examples/web.yaml")], "database": {}}})
     off = dict(site, infrastructure={k: False for k in site.get("infrastructure", {})}, apps={})
     problems = []
     for name, data in (("all on", on), ("all off", off)):

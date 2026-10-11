@@ -7,14 +7,17 @@
 
 The shared settings (certificates, timezone, network, NAS, LVM) are asked here. Everything else is
 declared where it's used: each component's infrastructure/<name>/component.yaml and each app's
-apps/<name>/app.yaml list their site settings (site:), so adding one needs no change here. Only what
-is turned on gets its questions; what is turned off loses its section. Entries in apps that no
-apps/<name>/ describes (a database only, a chart from elsewhere) are kept as they are.
+apps/<name>/app.yaml (for an app from its own repo, plugins/<name>/app.yaml in the site directory,
+or in the directory an entry's app: names by absolute path) list their site settings (site:), so
+adding one needs no change here. Only what is turned on gets its
+questions; what is turned off loses its section. Entries in apps that no app.yaml describes (a
+database only, a chart from elsewhere) are kept as they are.
 
 Each question offers a default: the current site.yaml value, or one detected on this node (LAN IP
 and CIDR, timezone, Zigbee USB device, cni0 gateway, LVM volume group). Enter keeps it. Answers are
 validated, and the diff is shown before anything is written. Secrets are not asked here:
-scripts/secret.py set <key> writes them. Afterwards: helmfile diff.
+scripts/secret.py fill writes the apps' declared ones, scripts/secret.py set <key> any one.
+Afterwards: helmfile diff.
 """
 import difflib
 import glob
@@ -210,6 +213,13 @@ def definitions(kind, spec_file):
     return found
 
 
+def outside(app):
+    """The app.yaml of an app outside the repo, if it has one: plugins/<app> in the site directory
+    (a clone of its own repo), or the directory app names by absolute path."""
+    path = pathlib.Path(app if app.startswith("/") else SITE / "plugins" / app, "app.yaml")
+    return (yaml.safe_load(path.read_text()) or {}) if path.is_file() else None
+
+
 def q(v):
     return yaml.safe_dump(v, default_flow_style=True, allow_unicode=True, width=1000).strip().removesuffix("\n...")
 
@@ -271,7 +281,8 @@ def main():
     app_defs = definitions("apps", "app.yaml")
 
     if example:
-        cur = {"apps": {"shop": {"database": {}}, "shop-staging": {"database": {}}, "notes": {"database": {"size": "2Gi"}}}}
+        cur = {"apps": {"shop": {"database": {}}, "shop-staging": {"database": {}}, "notes": {"database": {"size": "2Gi"}},
+                        "store": {"app": "store-deploy", "values": ["staging.yaml"]}}}
     else:
         cur = (yaml.safe_load(out.read_text()) or {}) if out.exists() else {}
         print(f"設定 {out}：直接按 Enter 採用 [ ] 裡的值。\n")
@@ -336,17 +347,20 @@ def main():
     for name in names:
         entry = cur_apps.get(name) or {}
         definition = entry.get("app", name)
+        spec = app_defs[definition] if definition in app_defs else None if example else outside(definition)
+        where = (f"apps/{definition}" if definition in app_defs else
+                 definition if definition.startswith("/") else f"plugins/{definition}")
         entries = []
-        if definition in app_defs:
+        if spec is not None:
             if not example:
-                print(f"\napps.{name}（apps/{definition}）：")
-            declared = app_defs[definition].get("site") or {}
+                print(f"\napps.{name}（{where}）：")
+            declared = spec.get("site") or {}
             entries = ask_declared(declared, f"apps.{name}.", cur, example)
             top = {k.split(".")[0] for k in declared}
             entries += [(k, None, v) for k, v in entry.items() if k not in top]
         else:
             entries = [(k, None, v) for k, v in entry.items()]
-        app_blocks[name] = (definition, entries)
+        app_blocks[name] = (definition, where, spec, entries)
 
     # The file.
     if example:
@@ -397,15 +411,16 @@ def main():
                             "Its unallocated space is all they can use. Ubuntu's installer names it ubuntu-vg.", vg),
     ]
 
-    app_lines = ["# One entry per app, installed in the namespace of its name. apps/<app>/app.yaml describes it",
-                 "# (app: names it, else the entry's name); an entry without one only gets what it sets itself:",
-                 "# database (a Postgres cluster), or chart, version and values (a chart from elsewhere). Its",
-                 "# other keys are the app's settings, and override its chart's defaults.",
+    app_lines = ["# One entry per app, installed in the namespace of its name. Its app.yaml describes it: in",
+                 "# apps/<app>/, else in plugins/<app>/ in the site directory (a clone of the app's own repo);",
+                 "# app: names it (or a directory by absolute path), else the entry's name. An entry without",
+                 "# one only gets what it sets itself: database (a Postgres cluster), or chart, version and",
+                 "# values (a chart from elsewhere). Its other keys are the app's settings, and override its",
+                 "# chart's defaults. Secrets its app.yaml declares: scripts/secret.py fill.",
                  "apps:"]
-    for name, (definition, entries) in app_blocks.items():
-        if definition in app_defs:
-            desc = app_defs[definition].get("description", "")
-            app_lines += [f"  # {line}" for line in textwrap.wrap(f"apps/{definition}: {desc}.", 96)]
+    for name, (definition, where, spec, entries) in app_blocks.items():
+        if spec is not None:
+            app_lines += [f"  # {line}" for line in textwrap.wrap(f"{where}: {spec.get('description', '')}.", 96)]
         app_lines.append(f"  {name}:" if entries or definition != name else f"  {name}: {{}}")
         if definition != name:
             app_lines.append(f"    app: {q(definition)}")

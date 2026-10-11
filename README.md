@@ -50,10 +50,10 @@ site.example.yaml      the shape of site.yaml; site.secret.example.yaml for site
 
 ## Site directory
 
-`site.yaml`, `site.secret.yaml` and `values/` make up the site directory. helmfile and the scripts find it through `$CAIRN_SITE` (absolute), or use the repo root when that's unset; the three are gitignored there. To keep them out of this repo entirely, put them in a private one:
+`site.yaml`, `site.secret.yaml`, `values/` and `plugins/` (apps cloned from their own repos) make up the site directory. helmfile and the scripts find it through `$CAIRN_SITE` (absolute), or use the repo root when that's unset; all four are gitignored there. To keep them out of this repo entirely, put them in a private one:
 
 ```sh
-export CAIRN_SITE=~/cairn-site   # holds site.yaml, site.secret.yaml, values/
+export CAIRN_SITE=~/cairn-site   # holds site.yaml, site.secret.yaml, values/, plugins/
 scripts/configure.py             # writes $CAIRN_SITE/site.yaml
 helmfile apply
 ```
@@ -112,8 +112,9 @@ Keep a copy of the site directory somewhere safe (a private repo, a password man
 |---|---|
 | `description`, `timeout`, `needs` | as for a release |
 | `database` | `{}`, or `{size, image}`: a Postgres cluster in its namespace ([Postgres](#postgres)) |
-| `backup` | `volumes` (`<pvc>: {exclude, paths}`), `schedule`, `keepDays`; or `false`. The database is always included ([Backups](#backups)). |
+| `backup` | `volumes` (`<pvc>: {exclude, paths}`), `schedule`, `keepDays`; or `false`. The database is always included ([Backups](#backups)); `database: {}` (or `{image}`, its `pg_dump`) includes a CloudNativePG cluster `postgres` that the app's own chart makes. |
 | `site` | the settings it reads from its entry (below) |
+| `secrets` | the secrets it reads from its section of `site.secret.yaml`, for `scripts/secret.py fill` (below) |
 
 What it runs is either `apps/<app>/values.yaml` for the template `charts/app` (workloads with image, port, env, Ingress, volumes and the database's credentials; reference in `charts/app/values.yaml`, example in `charts/app/examples/web.yaml`), or `apps/<app>/chart/`, a chart of its own.
 
@@ -121,12 +122,12 @@ What it runs is either `apps/<app>/values.yaml` for the template `charts/app` (w
 
 | Field | |
 |---|---|
-| `app` | the `apps/` directory it installs, if not its own name; several entries can install one app (`shop`, `shop-staging`) |
-| `chart`, `version` | a chart from elsewhere: `oci://...` with an exact `version`, or `git::ssh://...@path?ref=<tag>` |
-| `values` | values files from elsewhere (`git::...?ref=<tag>`), for its chart or for `charts/app` |
+| `app` | the app it installs, if not its own name: a directory in `apps/`, else in `plugins/` in the site directory; several entries can install one app (`shop`, `shop-staging`). Or the absolute path of a directory shaped like one. |
+| `chart`, `version` | a chart from elsewhere: `oci://...` with an exact `version`, `git::ssh://...@path?ref=<tag>`, or the absolute path of a checkout |
+| `values` | values files for its chart or for `charts/app`: from elsewhere (`git::...?ref=<tag>`, or absolute paths), or relative to the app's directory |
 | anything else | its settings, at the root of its chart's values (`hostname`, `hosts`, and any chart default to override) |
 
-An app whose definition lives in its own repo needs nothing in `apps/`: helmfile fetches what its entry names (git over ssh uses your ssh keys; `helm registry login` for OCI registries).
+An app defined in its own repo needs nothing in `apps/`. Either its repo is shaped like `apps/<app>/` (`app.yaml`, `chart/`, a values file per environment), a plugin: clone it into `plugins/` in the site directory and name the clone with `app:`. Its entry picks the branch's values file, and `git pull` there updates it. Or helmfile fetches what its entry names (git over ssh uses your ssh keys; `helm registry login` for OCI registries).
 
 ```yaml
 apps:
@@ -138,9 +139,14 @@ apps:
   blog:                                    # charts/app, defined in the app's own repo
     values: [git::ssh://git@github.com/<owner>/blog.git@deploy/cairn.yaml?ref=v2.0.1]
     hosts: {web: blog.example.com}
+  store:                                   # a plugin: git clone <url> plugins/store-deploy
+    app: store-deploy
+    values: [staging.yaml]                 # in plugins/store-deploy
 ```
 
 **A setting under `site`** is declared by its dotted key (under `apps.<name>` for an app) with `comment` (written above it in `site.yaml`), `ask` (the question), `example` (for `site.example.yaml`), and optionally `check` (a validator in `configure.py`: `hostname`, `absPath`, `ip`, `cidr`, `email`, `zigbeeAdapter`), `default`, and `detect` (`serialDevice`). Templates read it with `required "<key> is required (site.yaml)"`.
+
+**A secret under `secrets`** is declared the same way, by its dotted key under `apps.<name>` in `site.secret.yaml`, with `comment` and either `generate: true` (a random 64-character hex string, for what only the app itself uses: a signing key, an internal password) or `ask` (the question, for what comes from elsewhere: a registry token). `scripts/secret.py fill` sets each one that's still unset, for every entry, or one (`fill <entry>`), or every entry installing an app (`fill <app>`, e.g. a plugin's directory name). Templates read it with `required "apps.<name>.<key> is required (site.secret.yaml: scripts/secret.py fill)"`.
 
 **What a chart gets**, later ones winning (maps merge, lists replace):
 
@@ -148,7 +154,7 @@ apps:
 - a third-party chart: `<release>.yaml` next to `component.yaml`, then `values/<release>.yaml`
 - an app's chart: `site.yaml`, `apps/<app>/values.yaml`, the entry's `values` files, the entry itself, then its section of `site.secret.yaml` (`apps.<name>`)
 
-**Adding an app**: write `apps/<app>/app.yaml` and `values.yaml` (or `chart/`), run `scripts/configure.py` to add its entry, then `scripts/configure.py --example` to update `site.example.yaml`. **Adding a component**: the same with `infrastructure/<name>/component.yaml`; `configure.py` asks whether to turn it on.
+**Adding an app**: write `apps/<app>/app.yaml` and `values.yaml` (or `chart/`), run `scripts/configure.py` to add its entry, then `scripts/configure.py --example` to update `site.example.yaml`. **Installing a plugin**: `git clone <url> plugins/<dir>`, add its entry (`app: <dir>` and `values:`), then `scripts/secret.py fill <name>` and `helmfile apply -l app=<name>`. **Adding a component**: the same with `infrastructure/<name>/component.yaml`; `configure.py` asks whether to turn it on.
 
 ## Apply
 
@@ -221,7 +227,7 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
    ```sh
    mkdir -p ~/.kube && sudo install -m 600 -o "$USER" -g "$USER" /etc/rancher/k3s/k3s.yaml ~/.kube/config
    ```
-4. Put back the site directory (clone the private repo and set `CAIRN_SITE`, or copy the files into the repo root). Without it, `scripts/configure.py` writes `site.yaml`, and `scripts/secret.py set gandi.pat` and `scripts/secret.py set discord.webhookUrl` write `site.secret.yaml` ([Secrets](#secrets)). Run `configure.py` as well if the site changed (new IPs, NAS, Zigbee stick...).
+4. Put back the site directory (clone the private repo and set `CAIRN_SITE`, or copy the files into the repo root). Without it, `scripts/configure.py` writes `site.yaml`, and `scripts/secret.py set gandi.pat`, `scripts/secret.py set discord.webhookUrl` and `scripts/secret.py fill` (the apps') write `site.secret.yaml` ([Secrets](#secrets)). Run `configure.py` as well if the site changed (new IPs, NAS, Zigbee stick...).
 5. `helmfile apply`
 6. For each app, and `monitoring` (Grafana): `scripts/restore.sh <name> <YYYY-MM-DD>` ([Backups](#backups)).
 7. `scripts/check.py`, and `scripts/check.py --test-alert` to see alerts reach Discord.
@@ -357,5 +363,6 @@ Kubernetes Secrets are base64, not encryption. **Plaintext secrets are never com
 
 - Secret values go in `site.secret.yaml` in the site directory; in the repo root it's gitignored (`*.secret.yaml`). `site.secret.example.yaml` lists the keys with placeholder values.
 - `scripts/secret.py set <key>` writes one key and keeps the others, asking for the value without echoing it. It checks the Gandi PAT and the Discord webhook with their services before writing them.
+- `scripts/secret.py fill` writes what the apps declare under `secrets` in their `app.yaml` and is still missing: it makes up the ones marked `generate` and asks for the rest. Run it again any time; it leaves set values alone.
 - Any value can instead be a reference that helmfile resolves when it renders ([vals](https://github.com/helmfile/vals), built into helmfile): `ref+sops://secrets.enc.yaml#/gandi/pat` (a SOPS-encrypted file, key from `SOPS_AGE_KEY_FILE`), `ref+op://<vault>/<item>/<field>` (1Password), `ref+envsubst://$VAR`, and more. A file path in a reference is relative to where you run helmfile.
 - The cluster chart gets the Gandi PAT and the monitoring chart the Discord webhook; each app gets only its own section, `apps.<name>` (`charts/app` turns its `secrets` into a Secret). Templates put secrets only in Secrets, which `helmfile diff` masks. Helm also keeps a copy in each release record, a Secret in the release's namespace.

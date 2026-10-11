@@ -50,10 +50,12 @@ grafana:
   # LAN only: its DNS record points at network.nodeIp.
   hostname: grafana.example.com
 
-# One entry per app, installed in the namespace of its name. apps/<app>/app.yaml describes it
-# (app: names it, else the entry's name); an entry without one only gets what it sets itself:
-# database (a Postgres cluster), or chart, version and values (a chart from elsewhere). Its
-# other keys are the app's settings, and override its chart's defaults.
+# One entry per app, installed in the namespace of its name. Its app.yaml describes it: in
+# apps/<app>/, else in plugins/<app>/ in the site directory (a clone of the app's own repo);
+# app: names it (or a directory by absolute path), else the entry's name. An entry without
+# one only gets what it sets itself: database (a Postgres cluster), or chart, version and
+# values (a chart from elsewhere). Its other keys are the app's settings, and override its
+# chart's defaults. Secrets its app.yaml declares: scripts/secret.py fill.
 apps:
   # apps/home: Mosquitto, Zigbee2MQTT, Home Assistant.
   home:
@@ -78,3 +80,6 @@ apps:
   notes:
     database:
       size: 2Gi
+  store:
+    app: store-deploy
+    values: [staging.yaml]

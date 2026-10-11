@@ -62,16 +62,21 @@ environments:
 {{- end }}
 {{- end }}
 
-{{- /* Apps: the entry in site.yaml over apps/<app>/app.yaml. The chart: the entry's chart:, else
-       apps/<app>/chart/, else charts/app with apps/<app>/values.yaml (or the entry's values:).
+{{- /* Apps: the entry in site.yaml over the app's directory's app.yaml: apps/<app>/, else
+       plugins/<app>/ in the site directory (a clone of the app's own repo), or the absolute path
+       app: names. The chart: the entry's chart:, else the directory's chart/, else charts/app
+       with its values.yaml (or the entry's values:, relative ones from the directory).
        Release <name> in namespace <name> gets site.yaml, those values files, the entry itself (its
        site settings, and any chart value to override), then its section of site.secret.yaml.
-       A database adds release postgres in the same namespace; volumes under backup:, or the
-       database, add release backup (charts/backup) there too, unless backup: false. */}}
+       A database adds release postgres in the same namespace; volumes under backup:, or a
+       database (its own, or backup.database for the cluster postgres its chart makes), add
+       release backup (charts/backup) there too, unless backup: false. */}}
 {{- range $name, $entry := $apps }}
 {{- $entry = $entry | default dict }}
 {{- if not (kindIs "map" $entry) }}{{ fail (printf "apps.%s must be a map (site.yaml)" $name) }}{{ end }}
-{{- $dir := printf "apps/%s" (get "app" $name $entry) }}
+{{- $app := get "app" $name $entry }}
+{{- $dir := printf "./apps/%s" $app }}
+{{- if hasPrefix "/" $app }}{{ $dir = $app }}{{ else if not (isDir $dir) }}{{ $dir = printf "%s/plugins/%s" $site $app }}{{ end }}
 {{- $spec := dict }}
 {{- if isFile (printf "%s/app.yaml" $dir) }}{{ $spec = readFile (printf "%s/app.yaml" $dir) | fromYaml }}
 {{- else if hasKey $entry "app" }}{{ fail (printf "apps.%s.app (site.yaml): there's no %s/app.yaml" $name $dir) }}{{ end }}
@@ -89,8 +94,8 @@ environments:
 {{- $chart := get "chart" "" $spec }}
 {{- $values := list (printf "%s/site.yaml" $site) }}
 {{- if not $chart }}
-{{- if isDir (printf "%s/chart" $dir) }}{{ $chart = printf "./%s/chart" $dir }}
-{{- else if isFile (printf "%s/values.yaml" $dir) }}{{ $chart = "./charts/app" }}{{ $values = append $values (printf "./%s/values.yaml" $dir) }}
+{{- if isDir (printf "%s/chart" $dir) }}{{ $chart = printf "%s/chart" $dir }}
+{{- else if isFile (printf "%s/values.yaml" $dir) }}{{ $chart = "./charts/app" }}{{ $values = append $values (printf "%s/values.yaml" $dir) }}
 {{- else if hasKey $spec "values" }}{{ $chart = "./charts/app" }}{{ end }}
 {{- end }}
 {{- if $chart }}
@@ -99,6 +104,7 @@ environments:
 {{- end }}
 {{- range $v := get "values" list $spec }}
 {{- if and (contains "::" $v) (not (contains "ref=" $v)) }}{{ fail (printf "apps.%s.values (site.yaml): pin %s with ?ref=" $name $v) }}{{ end }}
+{{- if not (or (contains "::" $v) (hasPrefix "/" $v)) }}{{ $v = printf "%s/%s" $dir $v }}{{ end }}
 {{- $values = append $values $v }}
 {{- end }}
 {{- $values = append $values (omit $entry "app" "chart" "version" "values" "timeout" "needs" "backup") }}
@@ -112,7 +118,10 @@ environments:
 {{- if kindIs "map" $backup }}
 {{- $b := deepCopy $backup }}
 {{- $_ := set $b "name" $name }}
-{{- if hasKey $spec "database" }}{{ $_ := set $b "database" (dict "image" (get "image" $pgImage ($spec.database | default dict))) }}{{ end }}
+{{- if or (hasKey $spec "database") (hasKey $b "database") }}
+{{- $db := mergeOverwrite dict (get "database" dict $spec | default dict) (get "database" dict $b | default dict) }}
+{{- $_ := set $b "database" (dict "image" (get "image" $pgImage $db)) }}
+{{- end }}
 {{- if or (get "volumes" dict $b) (hasKey $b "database") }}
 {{- $releases = append $releases (dict "name" "backup" "namespace" $name "chart" "./charts/backup" "labels" (dict "app" $name "backup" $name) "needs" (list (printf "%s/%s" $name $name) (printf "%s/postgres" $name)) "values" (list (printf "%s/site.yaml" $site) $b)) }}
 {{- end }}

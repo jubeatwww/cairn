@@ -14,3 +14,5 @@ __pycache__/
 # $CAIRN_SITE, the repo root is the site directory, per-release overrides (values/) included.
 site.yaml
 /values/
+# Apps from their own repos, cloned here (README "Components and apps").
+/plugins/
