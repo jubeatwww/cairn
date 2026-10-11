@@ -10,7 +10,7 @@ Working notes for agents. Read [README.md](README.md) first for the cluster spec
 - **Host-level config is out of scope.** Don't touch node networking, the firewall, k3s install flags, or anything outside the cluster. If a change needs one of those, tell the user instead.
 - **Never commit plaintext secrets** (see below).
 - **No hardcoded values in templates.** Site-specific ones (domains, hostnames, IPs, CIDRs, NAS paths, device paths, emails, timezones) go in `site.yaml`; the rest (versions, issuer names, schedules, sizes, solver and Traefik settings) in the chart's `values.yaml`. Templates only assemble them.
-- **The repo is public; the home network's layout isn't.** `site.yaml` lives in the site directory: gitignored in the repo root, or outside the repo through `$CAIRN_SITE`. Nothing committed (templates, comments, README examples, script messages) may contain real values from it: use placeholders like `example.com`, `192.168.0.0/24` or `<lanCidr>`. The owner's own projects may have app directories under their names; a client's project stays out (its entry, with its chart from elsewhere, lives only in `site.yaml`), since its public domain would tie this repo to the home network.
+- **The repo is public; the home network's layout isn't.** `site.yaml` lives in the site directory: gitignored in the repo root, or outside the repo through `$CAIRN_SITE`. Nothing committed (templates, comments, README examples, script messages) may contain real values from it: use placeholders like `example.com`, `192.168.0.0/24` or `<lanCidr>`. The pre-commit hook (`scripts/hooks`, README "Before committing") blocks staged changes that contain the site directory's values; never bypass it with `--no-verify` to get a commit through. The owner's own projects may have app directories under their names; a client's project stays out (its entry, with its chart from elsewhere, lives only in `site.yaml`), since its public domain would tie this repo to the home network.
 
 ## Conventions
 
@@ -52,9 +52,11 @@ Working notes for agents. Read [README.md](README.md) first for the cluster spec
   helmfile lint -l name=home
   helmfile template -l name=home
   ```
+- `scripts/precommit.py` runs every offline check at once (what the pre-commit hook runs).
 - See what would change in the cluster (`helmfile diff` needs the helm-diff plugin), then apply:
   ```sh
-  helmfile diff
+  helmfile diff --suppress-secrets
   helmfile apply
   ```
-  `-l name=<release>` limits either to one release.
+  `-l name=<release>`, `-l app=<name>` or `-l component=<name>` limits either. A refactor that shouldn't change the cluster must show no diff beyond comments.
+- After applying, `scripts/check.py` confirms certificates, backups, targets, rules, alerts and the metrics the rules read.

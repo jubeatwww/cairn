@@ -114,7 +114,24 @@ helmfile apply -l component=monitoring
 
 `helmfile.yaml.gotmpl` builds the releases from the base, the components `infrastructure` turns on, and the entries in `apps`, and installs them in dependency order (each release's `needs`): cert-manager and its Gandi webhook (their CRDs back the ClusterIssuers and Certificates), OpenEBS LVM LocalPV, the cluster chart (the ClusterIssuers, and the StorageClass `lvm` the other volumes use), kube-prometheus-stack (ServiceMonitor and PodMonitor CRDs) before Loki, Alloy and CloudNativePG, the operator before each app's database, a database before its app. A component's chart gets `site.yaml` (and `site.secret.yaml` if it turns secrets into Secrets), a third-party chart its `<release>.yaml`, then either one its override from `values/`. An app's chart gets `site.yaml`, then its entry in `apps`. For the kubeconfig it uses `$KUBECONFIG`, else `~/.kube/config` ([Restore](#restore), step 3).
 
-To upgrade an app, bump its image in its chart's `values.yaml` and run `helmfile apply`. To upgrade a third-party chart, bump its `version` in its `component.yaml`.
+To upgrade an app, bump its image in its chart's `values.yaml` and run `helmfile apply`. To upgrade a third-party chart, bump its `version` in its `component.yaml`. Afterwards, `scripts/check.py` confirms everything is healthy.
+
+### Before committing
+
+Turn on the repo's pre-commit hook once per clone:
+
+```sh
+git config core.hooksPath scripts/hooks
+```
+
+It runs `scripts/precommit.py`, offline, in a few seconds, and stops the commit if:
+
+- the staged changes contain a value from the site directory that the examples don't have: a hostname, IP, NAS path, secret, the DNS zones and LAN prefix they imply, your git email. Names of directories in `apps/` and `infrastructure/` are fine; anything else is the home network's.
+- `site.example.yaml` isn't what `scripts/configure.py --example` writes.
+- a chart in this repo fails to lint or render with the examples, every component on or all off.
+- a script has a syntax error (and `shellcheck` or `ruff` complain, if installed).
+
+`git commit --no-verify` skips it once.
 
 ## Exposing services
 

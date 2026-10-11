@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Git runs this before every commit once the clone uses these hooks:
+#   git config core.hooksPath scripts/hooks
+# The checks are in scripts/precommit.py. Skip them once with git commit --no-verify.
+exec python3 "$(git rev-parse --show-toplevel)/scripts/precommit.py"

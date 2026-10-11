@@ -128,13 +128,15 @@ environments:
 {{- end }}
 {{- end }}
 
-{{- /* needs: only releases that are installed. */}}
+{{- /* needs: only releases that are installed. Label local=true: a chart in this repo, which
+       renders without network (scripts/precommit.py). */}}
 {{- $ids := dict }}
 {{- range $r := $releases }}{{ $_ := set $ids (printf "%s/%s" $r.namespace $r.name) true }}{{ end }}
 {{- range $r := $releases }}
 {{- $keep := list }}
 {{- range $n := $r.needs }}{{ if hasKey $ids $n }}{{ $keep = append $keep $n }}{{ end }}{{ end }}
 {{- $_ := set $r "needs" $keep }}
+{{- if hasPrefix "./" $r.chart }}{{ $_ := set $r.labels "local" "true" }}{{ end }}
 {{- end }}
 
 helmDefaults:
