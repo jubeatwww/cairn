@@ -49,6 +49,7 @@ helm upgrade --install cluster charts/cluster --namespace kube-system \
 release kube-prometheus-stack
 release loki
 release alloy
+release cloudnative-pg
 
 echo "==> charts/home"
 helm upgrade --install home charts/home --namespace home --create-namespace \
@@ -61,5 +62,17 @@ helm upgrade --install immich charts/immich --namespace immich --create-namespac
 echo "==> charts/monitoring"
 helm upgrade --install monitoring charts/monitoring --namespace monitoring --create-namespace \
   --values site.yaml --values site.secret.yaml --wait --timeout 5m "${dry[@]}" > /dev/null
+
+# One release per Postgres cluster in site.yaml (postgres.clusters), in the namespace of its name.
+mapfile -t pg_clusters < <(python3 -c '
+import sys, yaml
+site = yaml.safe_load(open(sys.argv[1])) or {}
+for name in (site.get("postgres") or {}).get("clusters") or {}:
+    print(name)' site.yaml)
+for ns in "${pg_clusters[@]}"; do
+  echo "==> charts/postgres ($ns)"
+  helm upgrade --install postgres charts/postgres --namespace "$ns" --create-namespace \
+    --values site.yaml --wait --timeout 10m "${dry[@]}" > /dev/null
+done
 
 echo "==> Done${dry:+ (dry run, nothing changed)}"

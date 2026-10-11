@@ -25,8 +25,9 @@ charts/cluster/     local chart: Let's Encrypt ClusterIssuers, Gandi DNS-01 cred
 charts/home/        local chart: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup
 charts/immich/      local chart: Immich, public, with the photo library on the NAS
 charts/monitoring/  local chart: Grafana's LAN-only Ingress, for the monitoring stack in helm/
+charts/postgres/    local chart: one Postgres cluster per namespace in site.yaml, with nightly dumps
 helm/<release>/     third-party charts: values.yaml + install.sh (cert-manager, the Gandi webhook,
-                    OpenEBS LVM LocalPV, kube-prometheus-stack, Loki, Alloy)
+                    OpenEBS LVM LocalPV, kube-prometheus-stack, Loki, Alloy, CloudNativePG)
 scripts/            helpers you run by hand: configure, apply, Gandi and Discord setup, restore
 ```
 
@@ -41,7 +42,7 @@ scripts/apply.sh --dry-run   # validate the local charts against the cluster, ch
 scripts/apply.sh             # install or upgrade everything
 ```
 
-It installs in dependency order: cert-manager and its Gandi webhook (their CRDs back the ClusterIssuers and Certificates), OpenEBS LVM LocalPV, then `charts/cluster` with `site.yaml` and `site.secret.yaml` (the ClusterIssuers, and the StorageClass `lvm` the monitoring volumes use). Then kube-prometheus-stack (ServiceMonitor CRDs), Loki and Alloy, and last `charts/home`, `charts/immich` and `charts/monitoring` with `site.yaml`. A dry run skips the releases in `helm/`. For the kubeconfig it uses `$KUBECONFIG`, then `~/.kube/config`, then k3s's root-only `/etc/rancher/k3s/k3s.yaml` (run it with sudo).
+It installs in dependency order: cert-manager and its Gandi webhook (their CRDs back the ClusterIssuers and Certificates), OpenEBS LVM LocalPV, then `charts/cluster` with `site.yaml` and `site.secret.yaml` (the ClusterIssuers, and the StorageClass `lvm` the monitoring volumes use). Then kube-prometheus-stack (ServiceMonitor CRDs), Loki, Alloy and CloudNativePG, then `charts/home`, `charts/immich` and `charts/monitoring` with `site.yaml`, and last `charts/postgres` once per cluster in `postgres.clusters`. A dry run skips the releases in `helm/`. For the kubeconfig it uses `$KUBECONFIG`, then `~/.kube/config`, then k3s's root-only `/etc/rancher/k3s/k3s.yaml` (run it with sudo).
 
 To upgrade an app, bump its image in `charts/home/values.yaml` and run `scripts/apply.sh`.
 
@@ -69,7 +70,7 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
    ufw allow from <lanCidr> to any port 21064 proto tcp comment 'HomeKit Bridge'
    ufw allow from <lanCidr> to any port 5353 proto udp comment 'mDNS'
    ```
-   Leave unallocated space in an LVM volume group (`lvm.volumeGroup`) for the size-capped volumes, at least 70 GiB with the sizes in this repo (see [Storage](#storage)). Ubuntu's installer does that by default: it gives the root logical volume only part of the disk.
+   Leave unallocated space in an LVM volume group (`lvm.volumeGroup`) for the size-capped volumes, at least 70 GiB plus 5 GiB per Postgres cluster with the sizes in this repo (see [Storage](#storage)). Ubuntu's installer does that by default: it gives the root logical volume only part of the disk.
 3. Optional: give your user the kubeconfig so the scripts don't need sudo:
    ```sh
    mkdir -p ~/.kube && sudo install -m 600 -o "$USER" -g "$USER" /etc/rancher/k3s/k3s.yaml ~/.kube/config
@@ -79,6 +80,7 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
 6. `scripts/setup-discord-alerts.sh`: writes the Discord webhook for alerts to `site.secret.yaml` (see [Monitoring](#monitoring)). It installs kube-prometheus-stack too; Prometheus waits for its volume until `scripts/apply.sh` installs LVM LocalPV.
 7. `scripts/apply.sh`
 8. Restore the home automation state from the NAS: `scripts/restore-home.sh <YYYY-MM-DD>` (see [Backups](#backups)).
+9. Restore each Postgres database: `scripts/restore-postgres.sh <namespace> <YYYY-MM-DD>` (see [Postgres](#postgres)).
 
 ## TLS
 
@@ -125,6 +127,30 @@ Run the port-forward on a computer whose kubectl reaches the cluster (the node's
 
 **Editing metadata.** Immich writes edits to tags, descriptions, dates and ratings as `.xmp` sidecars next to the originals, and there's no setting to put them elsewhere. With the export read-only that write fails silently and Immich re-reads the file, so the edit is lost. Before editing, switch the export to read/write on the NAS (the mount in the cluster is already read-write), and back to read-only when done. Keep those sessions short: while writable, deleting an asset for good in Immich (emptying the trash, or its nightly cleanup of items trashed 30+ days ago) also deletes the original on the NAS. Read-only, those deletes fail and the originals stay.
 
+## Postgres
+
+`helm/cloudnative-pg` runs the CloudNativePG operator. `charts/postgres` gives each namespace listed in `postgres.clusters` (`site.yaml`) its own Postgres cluster: one instance, on a 5 GiB `lvm` volume. Separate clusters keep projects apart: each one restarts, upgrades and restores on its own, and one project's load can't fill another's disk.
+
+In each of those namespaces:
+
+- `postgres-rw:5432` serves the database `app`, owned by the user `app`.
+- Secret `postgres-app` holds the credentials, generated on first start: `username`, `password`, `dbname`, `host`, `port`, and a ready-made `uri`. Point the app at it, e.g.
+  ```yaml
+  env:
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef: {name: postgres-app, key: uri}
+  ```
+- A NetworkPolicy lets in only that namespace's pods, plus the operator and Prometheus. Apps in other namespaces can't connect even with the password. A new pod's connections are refused for its first few seconds, until k3s adds it to the policy, so apps should retry the database on startup.
+
+To add a cluster, add its namespace to `postgres.clusters` (or run `scripts/configure.py`) and run `scripts/apply.sh`. Per-cluster settings go next to the name: `size` to grow one online (`notes: {size: 20Gi}`), `image` to pin its version. Removing an entry only stops `scripts/apply.sh` from managing that cluster, and even `helm uninstall` leaves the Cluster and its data in place. Deleting it takes `kubectl -n <namespace> delete cluster postgres`, which removes the data too.
+
+**Backups.** Every night at 04:30, each database is dumped with `pg_dump` (custom format) to the NAS, as `<postgres.backupPath>/<namespace>/YYYY-MM-DD.dump`, and kept 14 days. A failed dump shows up in Discord as `KubeJobFailed`. To restore a day, stop the apps that use the database, then run `scripts/restore-postgres.sh <namespace> <YYYY-MM-DD>`. It lists the open connections, asks before changing anything, and replaces the database's contents in one transaction; if anything fails, the database stays as it was.
+
+**Upgrades.** For a new minor version, change `image` in `charts/postgres/values.yaml` and run `scripts/apply.sh`; CloudNativePG restarts each instance on it. A new major version works the same way, but CloudNativePG then stops the instance and upgrades the data in place with `pg_upgrade`, which takes a few minutes. Try it on one cluster first (`image` in its `postgres.clusters` entry, e.g. the uat one), right after a dump, and run `ANALYZE` afterwards, since `pg_upgrade` doesn't carry over the planner statistics.
+
+Grafana has CloudNativePG's dashboard, and Prometheus scrapes every instance.
+
 ## Monitoring
 
 Everything runs in namespace `monitoring`:
@@ -148,7 +174,7 @@ Helm installs kube-prometheus-stack's CRDs only on the first install. After bump
 
 Two StorageClasses, both on the node's disk:
 
-- `lvm` (`charts/cluster`, provisioned by `helm/lvm-localpv`): each volume is an LVM logical volume of exactly its requested size, in the volume group `lvm.volumeGroup` from `site.yaml`. The size is a hard cap: past it, writes fail with "no space left" and the root filesystem isn't touched. For volumes that keep growing: Prometheus (20 GiB), Loki (10 GiB), Immich's thumbnails and encoded videos (40 GiB).
+- `lvm` (`charts/cluster`, provisioned by `helm/lvm-localpv`): each volume is an LVM logical volume of exactly its requested size, in the volume group `lvm.volumeGroup` from `site.yaml`. The size is a hard cap: past it, writes fail with "no space left" and the root filesystem isn't touched. For volumes that keep growing: Prometheus (20 GiB), Loki (10 GiB), Immich's thumbnails and encoded videos (40 GiB), each Postgres cluster (5 GiB by default).
 - `local-path` (k3s's default): a directory on the root filesystem. The requested size is neither enforced nor reserved. For the small volumes: Home Assistant, Zigbee2MQTT, Grafana, Immich's Postgres and model cache.
 
 The `lvm` volumes can only use the volume group's unallocated space. Volumes grow online, without restarting anything:

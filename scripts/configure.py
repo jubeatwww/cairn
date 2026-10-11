@@ -154,6 +154,12 @@ def valid_solver(v):
     return None if v in SOLVERS else "可用的值：" + "、".join(SOLVERS)
 
 
+def valid_namespaces(v):
+    names = [n.strip() for n in v.split(",") if n.strip()]
+    bad = [n for n in names if not re.fullmatch(r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?", n)]
+    return f"不是合法的 namespace 名稱（小寫英數字和 -）：{', '.join(bad)}" if bad else None
+
+
 def main():
     cur = yaml.safe_load(OUT.read_text()) if OUT.exists() else {}
 
@@ -209,8 +215,15 @@ def main():
     library = ask(f"照片庫在 NAS（{nas}）上的 export 路徑", get("immich", "libraryPath"), valid_abs_path)
     grafana_host = ask("Grafana 的主機名稱（只限內網）", get("grafana", "hostname") or "grafana." + ha_host.split(".", 1)[1], valid_hostname)
 
+    pg_clusters = get("postgres", "clusters") or {}
+    print("\nPostgres：每個叢集放在同名的 namespace。個別設定（例如 size）在 site.yaml 裡改，這裡會保留。")
+    pg_names = ask("Postgres 叢集（逗號分隔）", ", ".join(pg_clusters), valid_namespaces)
+    pg_names = [n.strip() for n in pg_names.split(",") if n.strip()]
+    pg_backup = ask(f"Postgres 每日備份在 NAS（{nas}）上的 export 路徑", get("postgres", "backupPath"), valid_abs_path)
+
     q = lambda v: yaml.safe_dump(v, default_flow_style=True).strip().removesuffix("\n...")  # noqa: E731
     zone_lines = "".join(f"    {q(z)}: gandi\n" for z in gandi_zones) or "    {}\n"
+    pg_lines = "".join(f"    {q(n)}: {q(pg_clusters.get(n) or {})}\n" for n in pg_names)
     text = f"""\
 # Site-specific settings for this cluster: the "profile" the charts in charts/ are rendered with.
 # Moving to another machine, network or domain means editing this file, not the templates.
@@ -269,6 +282,13 @@ immich:
 grafana:
   # LAN only: its DNS record points at network.nodeIp.
   hostname: {q(grafana_host)}
+
+postgres:
+  # One Postgres cluster per entry, in the namespace of that name (charts/postgres). Settings per
+  # cluster override the chart's: size (e.g. 20Gi).
+  clusters:
+{pg_lines}  # NFS export on nas.server for the nightly dumps, one directory per cluster.
+  backupPath: {q(pg_backup)}
 """
     old = OUT.read_text() if OUT.exists() else ""
     if old == text:

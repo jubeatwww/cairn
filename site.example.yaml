@@ -53,3 +53,13 @@ immich:
 grafana:
   # LAN only: its DNS record points at network.nodeIp.
   hostname: grafana.example.com
+
+postgres:
+  # One Postgres cluster per entry, in the namespace of that name (charts/postgres). Settings per
+  # cluster override the chart's: size (e.g. 20Gi).
+  clusters:
+    shop: {}
+    shop-staging: {}
+    notes: {size: 2Gi}
+  # NFS export on nas.server for the nightly dumps, one directory per cluster.
+  backupPath: /volume1/pg-dumps
