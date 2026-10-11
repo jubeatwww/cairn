@@ -17,10 +17,6 @@ cd "$REPO"
 name=${1:-} day=${2:-}
 [[ -n $name && $day =~ ^20[0-9]{2}-[0-9]{2}-[0-9]{2}$ ]] || { echo "usage: $0 <name> <YYYY-MM-DD>" >&2; exit 1; }
 
-if [[ -z ${KUBECONFIG:-} ]]; then
-  if [[ -r $HOME/.kube/config ]]; then export KUBECONFIG=$HOME/.kube/config; else export KUBECONFIG=/etc/rancher/k3s/k3s.yaml; fi
-fi
-
 job=restore-$(date +%s)
 manifest=$(helmfile -q -f helmfile.yaml.gotmpl template --skip-deps -l backup="$name" \
   --set restore.date="$day" --set restore.job="$job" --show-only templates/restore-job.yaml) ||

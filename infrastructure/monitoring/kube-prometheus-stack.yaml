@@ -21,11 +21,11 @@ defaultRules:
     kubeProxy: false
     windows: false
 
-# Scrape only what the chart's rules and dashboards read (checked against 91.9.0): about 18k series
-# instead of 113k. After bumping the chart, check its rules and dashboards for metrics these lists
-# drop. k3s serves every component's metrics (apiserver, etcd, scheduler, kubelet...) from one
-# shared registry, at both the apiserver and the kubelet endpoint, so each of those two jobs keeps
-# only its own.
+# Scrape only what the chart's rules and dashboards read: about 18k series instead of 113k. After
+# bumping the chart, scripts/check.py (metrics) names any metric they read that these lists drop.
+# k3s serves every component's metrics (apiserver, etcd, scheduler, kubelet...) from one shared
+# registry, at both the apiserver and the kubelet endpoint, so each of those two jobs keeps only
+# its own.
 kubeApiServer:
   serviceMonitor:
     metricRelabelings:

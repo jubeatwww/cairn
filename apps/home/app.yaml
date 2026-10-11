@@ -1,16 +1,4 @@
-# An app, installed for each entry in site.yaml's apps whose app is this directory (the entry's own
-# name unless it sets app:). Read by helmfile.yaml.gotmpl and scripts/configure.py:
-#   description  what it runs
-#   timeout      seconds to wait for it to be ready (default 300)
-#   needs        namespace/release installed first, besides kube-system/cluster
-#   database     a Postgres cluster in its namespace (charts/postgres-cluster); size, image
-#   backup       what charts/backup puts on the NAS every night: volumes (PVC: exclude, paths),
-#                schedule, keepDays; the database is always included. false: no backup.
-#   site         the settings it reads from apps.<name> in site.yaml, asked by scripts/configure.py:
-#                key (dotted, under apps.<name>): comment, ask, example, check, default, detect
-#                (as in infrastructure/monitoring/component.yaml)
-# The chart is chart/ in this directory. An entry in site.yaml can override any of these, and set
-# chart, version and values to install a chart from elsewhere.
+# Installed by apps.home in site.yaml; its chart is chart/. Fields: README "Components and apps".
 description: Mosquitto, Zigbee2MQTT, Home Assistant
 timeout: 600
 backup:

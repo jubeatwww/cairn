@@ -1,17 +1,6 @@
-# Always installed: certificates, storage, and the cluster-wide settings in chart/. Its site settings
-# (acmeEmail, acme, timezone, network, nas, lvm) are the shared ones, asked by scripts/configure.py
-# itself.
-#
-# A component's releases, read by helmfile.yaml.gotmpl:
-#   name, namespace  the release
-#   chart            repo/chart (repo from repositories below) or ./chart, this directory's
-#   version          exact chart version, for repo charts
-#   timeout          seconds to wait for it to be ready (default 300)
-#   needs            namespace/release installed first; ones that aren't installed are dropped
-#   site             site: gets site.yaml; secrets: also site.secret.yaml. Unset (third-party
-#                    charts): gets <name>.yaml in this directory instead.
-#   when             only if this holds: gandiSolver (a zone in acme.zones uses gandi)
-# Every release then gets the site directory's values/<name>.yaml, if there is one.
+# The base: always installed. Certificates, storage, and the cluster-wide settings in chart/. Its
+# settings are the shared ones in site.yaml (acmeEmail, acme, timezone, network, nas, backup, lvm),
+# which scripts/configure.py asks itself. Fields: README "Components and apps".
 description: cert-manager, OpenEBS LVM LocalPV, ClusterIssuers, the StorageClass lvm, Traefik settings
 repositories:
   jetstack: https://charts.jetstack.io

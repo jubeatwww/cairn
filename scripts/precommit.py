@@ -13,6 +13,7 @@
   syntax    bash -n and Python compile for scripts/; shellcheck and ruff too, if installed
 
     scripts/precommit.py            the checks above, on what's staged
+    scripts/precommit.py --all      leaks in every tracked file, not only the staged changes
 """
 import ipaddress
 import os
@@ -97,23 +98,34 @@ def private_tokens():
     return {t: src for t, src in found.items() if t not in public and len(t) >= 4 and not t.isdigit()}
 
 
-def leaks():
-    tokens = private_tokens()
-    diff = run("git", "diff", "--cached", "-U0", "--no-color").stdout
-    hits, file = [], None
-    for line in diff.splitlines():
+def added_lines(everything):
+    """(file, line) for each line added by the staged changes, or every line of every tracked file."""
+    if everything:
+        for file in run("git", "ls-files").stdout.splitlines():
+            yield file, file
+            try:
+                yield from ((file, line) for line in (REPO / file).read_text().splitlines())
+            except (OSError, UnicodeDecodeError):
+                pass
+        return
+    file = None
+    for line in run("git", "diff", "--cached", "-U0", "--no-color").stdout.splitlines():
         if line.startswith("+++ "):
             file = line[6:] if line.startswith("+++ b/") else None
             if file:
-                lowered = file.lower()
-                hits += [f"{file}（路徑）：{src}" for t, src in tokens.items() if t.lower() in lowered]
+                yield file, file
         elif line.startswith("+") and file:
-            lowered = line.lower()
-            hits += [f"{file}：{src}" for t, src in tokens.items() if t.lower() in lowered]
+            yield file, line
+
+
+def leaks(everything=False):
+    tokens = {t.lower(): src for t, src in private_tokens().items()}
+    hits = {f"{file}：{src}" for file, line in added_lines(everything) for t, src in tokens.items() if t in line.lower()}
+    where = "追蹤中的檔案" if everything else "staged 的變更"
     if hits:
-        fail("leaks", sorted(set(hits)) + ["把值換成佔位符（example.com、192.168.0.0/24、<lanCidr>）"])
+        fail("leaks", sorted(hits) + ["把值換成佔位符（example.com、192.168.0.0/24、<lanCidr>）"])
     else:
-        print(f"OK   leaks: staged 的變更裡沒有 site 目錄的 {len(tokens)} 個值")
+        print(f"OK   leaks: {where}裡沒有 site 目錄的 {len(tokens)} 個值")
 
 
 def example():
@@ -182,6 +194,12 @@ def syntax():
 
 
 def main():
+    args = sys.argv[1:]
+    if args not in ([], ["--all"]):
+        sys.exit(__doc__)
+    if args:
+        leaks(everything=True)
+        sys.exit(1 if failed else 0)
     for check in (leaks, example, render, syntax):
         check()
     if failed:

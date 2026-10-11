@@ -1,6 +1,6 @@
-# Chart defaults: versions and the like. Site settings (hostname, IPs, NAS, Zigbee device...) come
-# from site.yaml in the site directory: the shared sections, then apps.home, which can override
-# these too (helmfile.yaml.gotmpl). Bump an image here, then run helmfile apply.
+# Defaults for home: versions and sizes. Its settings (hostname, zigbee) come from apps.home in
+# site.yaml, which can override these too (README "Components and apps"). Bump an image here, then
+# run helmfile apply.
 images:
   homeAssistant: ghcr.io/home-assistant/home-assistant:2026.9.4
   zigbee2mqtt: ghcr.io/koenkk/zigbee2mqtt:2.14.2

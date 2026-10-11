@@ -1,6 +1,5 @@
-# Cluster-wide defaults for release cluster. Site settings (acme.zones, acmeEmail) come from
-# site.yaml, secrets from site.secret.yaml, both in the site directory (helmfile.yaml.gotmpl). Its
-# values/cluster.yaml, if any, overrides these.
+# Defaults for release cluster. acmeEmail, acme, lvm and the Gandi PAT come from the site directory
+# (README "Components and apps").
 
 # One ClusterIssuer per entry, named by the key. Ingresses pick one with
 # cert-manager.io/cluster-issuer.

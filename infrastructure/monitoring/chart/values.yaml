@@ -1,6 +1,5 @@
-# Chart defaults for release monitoring. Site settings (grafana.hostname, network.lanCidr) come from
-# site.yaml, the Discord webhook from site.secret.yaml, both in the site directory
-# (helmfile.yaml.gotmpl). Its values/monitoring.yaml, if any, overrides these.
+# Defaults for release monitoring. grafana.hostname, network.lanCidr and the Discord webhook come
+# from the site directory (README "Components and apps").
 
 # ClusterIssuer for the Ingress certificate (infrastructure/base/chart, issuers).
 certIssuer: letsencrypt-prod

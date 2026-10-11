@@ -10,6 +10,7 @@
 # failing with 401. The chart keeps the Secret's value across upgrades.
 # Idempotent. Uses $KUBECONFIG, else ~/.kube/config, else k3s's root-only kubeconfig through sudo.
 set -euo pipefail
+source "$(dirname "$0")/lib.sh"
 
 NS=monitoring
 NAME=kube-prometheus-stack-grafana
@@ -17,9 +18,6 @@ NAME=kube-prometheus-stack-grafana
 step() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
-if [[ -z ${KUBECONFIG:-} ]]; then
-  if [[ -r $HOME/.kube/config ]]; then export KUBECONFIG=$HOME/.kube/config; else export KUBECONFIG=/etc/rancher/k3s/k3s.yaml; fi
-fi
 # Root-only kubeconfig: run cluster commands through sudo.
 as=()
 [[ -r $KUBECONFIG ]] || as=(sudo env "KUBECONFIG=$KUBECONFIG")

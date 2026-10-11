@@ -1,15 +1,7 @@
-# Everything this repo installs, in dependency order, rendered with the site directory: $CAIRN_SITE
-# (absolute), else the repo root. The releases come from data, so adding a component or an app
-# doesn't touch this file:
-#   infrastructure/<name>/component.yaml  base always; the others when site.yaml's
-#                                         infrastructure.<name> is true
-#   apps.<name> in site.yaml              one app each, defined by apps/<app>/app.yaml (app: in
-#                                         the entry, else its name), or by chart: in the entry
-#
-#   helmfile diff     what would change (needs the helm-diff plugin)
-#   helmfile apply    install or upgrade what changed
-#
-# Uses $KUBECONFIG, else ~/.kube/config.
+# Every release, built from data: infrastructure/<name>/component.yaml for the base and each
+# component site.yaml turns on, and one app per entry in site.yaml's apps, with apps/<app>/app.yaml.
+# Adding a component or an app doesn't touch this file (README "Components and apps"). Rendered
+# with the site directory: $CAIRN_SITE (absolute), else the repo root.
 {{- $site := env "CAIRN_SITE" | default "." }}
 environments:
   default:

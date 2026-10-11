@@ -1,6 +1,6 @@
 # cairn
 
-Kubernetes config for my homelab k3s cluster: what runs on it, and enough to rebuild it from scratch.
+Kubernetes config for my single-node k3s homelab: what runs on it, and everything needed to rebuild it from scratch. The repo is the template; one cluster's specifics live outside it, in a site directory, so the same repo can run another cluster with another site directory.
 
 ## Cluster
 
@@ -15,10 +15,21 @@ Kubernetes config for my homelab k3s cluster: what runs on it, and enough to reb
 
 Host-level setup (OS, networking, firewall, k3s install flags) is out of scope for this repo. [Restore](#restore) lists what the host needs.
 
+## Design
+
+- **The repo is the template, the site directory is the cluster.** Every value that describes one place (hostnames, IPs, NAS paths, devices, secrets) lives in the site directory. The repo, which is public, holds charts, defaults and placeholders only, and a pre-commit hook keeps it that way.
+- **Everything is data, built in one place.** Each component and app describes itself in a `component.yaml` or `app.yaml`; `site.yaml` says which ones are on and holds their settings; `helmfile.yaml.gotmpl` turns both into releases. Adding a component or an app means adding its directory and its entry, never editing helmfile, the scripts or another component.
+- **Classified by who uses it.** `infrastructure/` is what apps build on (certificates, storage, monitoring, the database operator), `apps/` is what people use, `charts/` holds the building blocks both share (the app template, a database, a backup).
+- **Third-party charts stay as published.** Each runs at an exact version with its values next to its `component.yaml`; whatever needs site values (an Ingress, a Secret) goes in the component's own chart instead.
+- **Everything is pinned.** Chart versions, image tags, and charts or values fetched from other repos: an unpinned source fails the render.
+- **Data outlives its release.** PVCs are kept when a release is uninstalled; data that keeps growing gets a size-capped `lvm` volume; whatever can't be rebuilt is listed under `backup` and copied to the NAS every night, and one command restores it.
+- **Secrets stay out of the repo and out of plain objects.** They live in `site.secret.yaml`, or in a secret store it references; charts put them only in Secrets, and each app sees only its own.
+- **One job per script, and checks instead of care.** `configure.py` writes the settings, `secret.py` the secrets, helmfile installs, `restore.sh` restores. `precommit.py` checks every commit offline; `check.py` checks the running cluster.
+
 ## Layout
 
 ```
-helmfile.yaml.gotmpl   every release, built from the components and apps below and the site's settings
+helmfile.yaml.gotmpl   every release, built from the components, the apps and the site's settings
 infrastructure/        shared services, one directory per component
   base/                always: cert-manager, OpenEBS LVM LocalPV, and chart/ (ClusterIssuers, Gandi
                        DNS-01 credentials, Traefik settings, the StorageClass lvm)
@@ -26,122 +37,170 @@ infrastructure/        shared services, one directory per component
                        webhook's Secret)
   postgres/            the CloudNativePG operator
 apps/                  one directory per app
-  home/                Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup
+  home/                Mosquitto, Zigbee2MQTT, Home Assistant
   immich/              Immich, public, with the photo library on the NAS
-charts/                charts the components and apps share
+charts/                building blocks the components and apps share
   app/                 the template for apps without a chart of their own
-  backup/              nightly backup of an app's or component's volumes and database to the NAS
-  postgres-cluster/    one app's Postgres cluster
-scripts/               helpers you run by hand: configure.py (site.yaml), secret.py (site.secret.yaml),
-                       check.py (is everything healthy), restore.sh, set-grafana-password.sh
+  backup/              an app's or component's nightly backup to the NAS, and its restore
+  postgres-cluster/    an app's Postgres cluster
+scripts/               configure.py, secret.py, check.py, restore.sh, set-grafana-password.sh;
+                       precommit.py and hooks/ for commits
 site.example.yaml      the shape of site.yaml; site.secret.example.yaml for site.secret.yaml
 ```
 
-A component's `component.yaml` lists its releases: a third-party chart with its exact version and its values in `<release>.yaml` next to it, or the component's own `chart/`. An app's `app.yaml` says what it runs, and its `chart/` holds the templates. Charts hold templates and defaults (image tags, sizes) only: every site-specific value comes from `site.yaml`. `scripts/configure.py` writes `site.yaml` from questions, offering the current values or ones detected on the node, so you don't have to edit it by hand.
+## Site directory
 
-### Site directory
-
-`site.yaml`, `site.secret.yaml` and `values/` make up the site directory: everything that turns this repo into one particular cluster. It describes the home network, so it stays out of this public repo. helmfile and the scripts find it through `$CAIRN_SITE`, or use the repo root when that's unset (the three are gitignored there). Point `CAIRN_SITE` elsewhere, e.g. a private repo, to keep them out of this one entirely:
+`site.yaml`, `site.secret.yaml` and `values/` make up the site directory. helmfile and the scripts find it through `$CAIRN_SITE` (absolute), or use the repo root when that's unset; the three are gitignored there. To keep them out of this repo entirely, put them in a private one:
 
 ```sh
-export CAIRN_SITE=~/cairn-site   # absolute; holds site.yaml, site.secret.yaml, values/
+export CAIRN_SITE=~/cairn-site   # holds site.yaml, site.secret.yaml, values/
 scripts/configure.py             # writes $CAIRN_SITE/site.yaml
 helmfile apply
 ```
 
-To pin which version of this repo a site runs, add it to the private repo as a git submodule at a tag, and run `CAIRN_SITE=$PWD helmfile -f cairn/helmfile.yaml.gotmpl apply` from there. Think twice before committing `site.secret.yaml` in plaintext to a hosted repo, even a private one.
+To pin which version of this repo a site runs, add it to the private repo as a git submodule at a tag, and run `CAIRN_SITE=$PWD helmfile -f cairn/helmfile.yaml.gotmpl apply` from there. Think twice before committing `site.secret.yaml` in plaintext to a hosted repo, even a private one ([Secrets](#secrets) has alternatives).
 
-- **`infrastructure`** in `site.yaml` turns each optional component on or off (`monitoring`, `postgres`). The base always goes in, and its Gandi webhook whenever a zone uses the `gandi` solver.
-- **`apps`** lists the apps to install, one entry each, in the namespace of the entry's name. An entry holds that app's settings (`hostname`, ...), and can override any of its chart's defaults:
-  ```yaml
-  apps:
-    home:
-      hostname: ha.example.com
-      zigbee: {device: /dev/serial/by-id/usb-..., adapter: zstack}
-    immich:
-      hostname: immich.example.com
-      libraryPath: /volume1/photos
-      storage: {data: {size: 80Gi}}     # over apps/immich/chart/values.yaml
-    notes:
-      database: {size: 2Gi}             # only a Postgres cluster, for an app running elsewhere
-  ```
-  Turning something off only stops helmfile from managing it: `helm uninstall` removes it and keeps its volumes. `scripts/configure.py` only asks what the components and apps that are on need, and keeps entries it has no questions for as they are.
-- **`values/<release>.yaml`** overrides a component release's chart defaults, e.g. `values/loki.yaml` over `infrastructure/monitoring/loki.yaml`. It goes last, so it wins (maps merge, lists replace). A longer Prometheus retention, say, without touching this repo:
-  ```yaml
-  # values/kube-prometheus-stack.yaml
-  prometheus:
-    prometheusSpec:
-      retention: 30d
-  ```
+`scripts/configure.py` writes `site.yaml` from questions, offering the current values or ones detected on the node (LAN IP and network, timezone, Zigbee stick, LVM volume group), and shows the diff before writing. Its sections:
+
+- the shared settings: `acmeEmail` and `acme` ([TLS](#tls)), `timezone`, `network`, `nas`, `backup`, `lvm`
+- `infrastructure`: each optional component, on or off. The base always goes in.
+- each component's own settings, e.g. `grafana.hostname`
+- `apps`: one entry per app to install, holding its settings ([Components and apps](#components-and-apps))
+
+```yaml
+infrastructure: {monitoring: true, postgres: true}
+apps:
+  home:
+    hostname: ha.example.com
+    zigbee: {device: /dev/serial/by-id/usb-..., adapter: zstack}
+  immich:
+    hostname: immich.example.com
+    libraryPath: /volume1/pictures
+    storage: {data: {size: 80Gi}}     # over apps/immich/chart/values.yaml
+  notes:
+    database: {size: 2Gi}             # only a Postgres cluster, for an app running elsewhere
+```
+
+Turning a component off or removing an entry only stops helmfile from managing it: `helm uninstall` removes it, and keeps its volumes.
+
+`values/<release>.yaml` overrides a component release's defaults without touching this repo, e.g. a longer Prometheus retention:
+
+```yaml
+# values/kube-prometheus-stack.yaml
+prometheus:
+  prometheusSpec:
+    retention: 30d
+```
 
 Keep a copy of the site directory somewhere safe (a private repo, a password manager, the NAS): after losing the node, `scripts/configure.py` can rebuild `site.yaml`, but only from what you remember.
 
-### Adding an app
+## Components and apps
 
-1. `apps/<app>/app.yaml`: its `description`, `timeout`, `database` if it needs one, the volumes to `backup`, and under `site` the settings it reads from its entry in `site.yaml`, each with a comment, the question `scripts/configure.py` asks, an example for `site.example.yaml`, and a validator (fields: `apps/home/app.yaml`).
-2. What it runs, either way:
-   - `apps/<app>/values.yaml` for the template `charts/app`: workloads (image, port, env, Ingress, volumes, the database's credentials...), documented in `charts/app/values.yaml`, example in `charts/app/examples/web.yaml`. Its hostnames are site settings: `hosts.<workload>` under `site` in `app.yaml`. Anything the template doesn't cover goes in `extraObjects`.
-   - `apps/<app>/chart/`: a chart of its own. Templates read their settings from the root of `.Values` (`.Values.hostname`), and the shared ones from `site.yaml`'s sections (`.Values.network.lanCidr`).
-3. `scripts/configure.py` to add its entry, then `scripts/configure.py --example` to update `site.example.yaml`.
+**`infrastructure/<name>/component.yaml`**, for the base and every component `infrastructure.<name>` turns on:
 
-An app whose definition lives elsewhere, e.g. in its own repo, needs nothing in `apps/`: its entry names a chart, or values files for `charts/app`, pinned, and helmfile fetches them (git over ssh uses your ssh keys; `helm registry login` for OCI registries). Its other keys go to the chart as values.
+| Field | |
+|---|---|
+| `description` | what it runs; `configure.py` shows it |
+| `repositories` | `name: url` of the Helm repositories its releases use |
+| `releases` | a list: `name`, `namespace`, `chart` (`repo/chart`, or `./chart` for the component's own), `version` (exact), `timeout` (seconds, default 300), `needs` (`namespace/release` installed first, if it's installed at all), `site` (`site`: gets `site.yaml`; `secrets`: `site.secret.yaml` too), `when` (`gandiSolver`: only if a zone uses gandi) |
+| `backup` | like an app's, plus the `namespace` and `needs` of its release |
+| `site` | the settings it reads from `site.yaml` (below) |
+
+**`apps/<app>/app.yaml`**, for every entry in `apps` named after it, or naming it with `app:`:
+
+| Field | |
+|---|---|
+| `description`, `timeout`, `needs` | as for a release |
+| `database` | `{}`, or `{size, image}`: a Postgres cluster in its namespace ([Postgres](#postgres)) |
+| `backup` | `volumes` (`<pvc>: {exclude, paths}`), `schedule`, `keepDays`; or `false`. The database is always included ([Backups](#backups)). |
+| `site` | the settings it reads from its entry (below) |
+
+What it runs is either `apps/<app>/values.yaml` for the template `charts/app` (workloads with image, port, env, Ingress, volumes and the database's credentials; reference in `charts/app/values.yaml`, example in `charts/app/examples/web.yaml`), or `apps/<app>/chart/`, a chart of its own.
+
+**An entry in `apps`** can set or override any of those fields, and:
+
+| Field | |
+|---|---|
+| `app` | the `apps/` directory it installs, if not its own name; several entries can install one app (`shop`, `shop-staging`) |
+| `chart`, `version` | a chart from elsewhere: `oci://...` with an exact `version`, or `git::ssh://...@path?ref=<tag>` |
+| `values` | values files from elsewhere (`git::...?ref=<tag>`), for its chart or for `charts/app` |
+| anything else | its settings, at the root of its chart's values (`hostname`, `hosts`, and any chart default to override) |
+
+An app whose definition lives in its own repo needs nothing in `apps/`: helmfile fetches what its entry names (git over ssh uses your ssh keys; `helm registry login` for OCI registries).
 
 ```yaml
 apps:
   shop:
-    chart: oci://ghcr.io/<owner>/charts/shop      # or git::ssh://git@github.com/<owner>/<repo>.git@deploy/chart?ref=v1.2.0
+    chart: oci://ghcr.io/<owner>/charts/shop
     version: 1.2.0
     database: {}
     hostname: shop.example.com
-  blog:                                           # charts/app, with the definition from the app's repo
+  blog:                                    # charts/app, defined in the app's own repo
     values: [git::ssh://git@github.com/<owner>/blog.git@deploy/cairn.yaml?ref=v2.0.1]
     hosts: {web: blog.example.com}
 ```
 
-A component works the same way: `infrastructure/<name>/component.yaml` (fields: `infrastructure/base/component.yaml`), its key under `infrastructure` in `site.yaml`, and its own settings under `site` in `component.yaml`.
+**A setting under `site`** is declared by its dotted key (under `apps.<name>` for an app) with `comment` (written above it in `site.yaml`), `ask` (the question), `example` (for `site.example.yaml`), and optionally `check` (a validator in `configure.py`: `hostname`, `absPath`, `ip`, `cidr`, `email`, `zigbeeAdapter`), `default`, and `detect` (`serialDevice`). Templates read it with `required "<key> is required (site.yaml)"`.
+
+**What a chart gets**, later ones winning (maps merge, lists replace):
+
+- a component's chart: `site.yaml`, `site.secret.yaml` with `site: secrets`, then `values/<release>.yaml`
+- a third-party chart: `<release>.yaml` next to `component.yaml`, then `values/<release>.yaml`
+- an app's chart: `site.yaml`, `apps/<app>/values.yaml`, the entry's `values` files, the entry itself, then its section of `site.secret.yaml` (`apps.<name>`)
+
+**Adding an app**: write `apps/<app>/app.yaml` and `values.yaml` (or `chart/`), run `scripts/configure.py` to add its entry, then `scripts/configure.py --example` to update `site.example.yaml`. **Adding a component**: the same with `infrastructure/<name>/component.yaml`; `configure.py` asks whether to turn it on.
 
 ## Apply
 
 With [helmfile](https://github.com/helmfile/helmfile) v1.8 and the [helm-diff](https://github.com/databus23/helm-diff) plugin (v3.15.10 or later; Helm 4 verifies its signature, see its README), from the repo root:
 
 ```sh
-helmfile diff                       # what would change in the cluster
-helmfile apply                      # install or upgrade what changed
-helmfile apply -l name=loki         # one release
-helmfile apply -l app=immich        # an app, with its database
+helmfile diff                            # what would change in the cluster
+helmfile apply                           # install or upgrade what changed
+helmfile apply -l name=loki              # one release
+helmfile apply -l app=immich             # an app, with its database and backup
 helmfile apply -l component=monitoring
 ```
 
-`helmfile.yaml.gotmpl` builds the releases from the base, the components `infrastructure` turns on, and the entries in `apps`, and installs them in dependency order (each release's `needs`): cert-manager and its Gandi webhook (their CRDs back the ClusterIssuers and Certificates), OpenEBS LVM LocalPV, the cluster chart (the ClusterIssuers, and the StorageClass `lvm` the other volumes use), kube-prometheus-stack (ServiceMonitor and PodMonitor CRDs) before Loki, Alloy and CloudNativePG, the operator before each app's database, a database before its app. A component's chart gets `site.yaml` (and `site.secret.yaml` if it turns secrets into Secrets), a third-party chart its `<release>.yaml`, then either one its override from `values/`. An app's chart gets `site.yaml`, then its entry in `apps`. For the kubeconfig it uses `$KUBECONFIG`, else `~/.kube/config` ([Restore](#restore), step 3).
+Releases install in dependency order (each one's `needs`): cert-manager first, since its CRDs back every certificate; LVM LocalPV and the cluster chart, which defines the StorageClass `lvm`; kube-prometheus-stack before whatever brings ServiceMonitors or PodMonitors; the operator before each database, a database before its app. helmfile uses `$KUBECONFIG`, else `~/.kube/config` ([Restore](#restore), step 3).
 
-To upgrade an app, bump its image in its chart's `values.yaml` and run `helmfile apply`. To upgrade a third-party chart, bump its `version` in its `component.yaml`. Afterwards, `scripts/check.py` confirms everything is healthy.
+To upgrade an app, bump its image in `apps/<app>/chart/values.yaml` (or `apps/<app>/values.yaml`) and run `helmfile apply`. To upgrade a third-party chart, bump its `version` in its `component.yaml`, then run `scripts/check.py`.
 
-### Before committing
+## Checks
 
-Turn on the repo's pre-commit hook once per clone:
+**Before a commit**, `scripts/precommit.py` runs offline in a few seconds. Turn it on once per clone as the pre-commit hook:
 
 ```sh
 git config core.hooksPath scripts/hooks
 ```
 
-It runs `scripts/precommit.py`, offline, in a few seconds, and stops the commit if:
+It stops the commit if:
 
 - the staged changes contain a value from the site directory that the examples don't have: a hostname, IP, NAS path, secret, the DNS zones and LAN prefix they imply, your git email. Names of directories in `apps/` and `infrastructure/` are fine; anything else is the home network's.
-- `site.example.yaml` isn't what `scripts/configure.py --example` writes.
-- a chart in this repo fails to lint or render with the examples, every component on or all off.
-- a script has a syntax error (and `shellcheck` or `ruff` complain, if installed).
+- `site.example.yaml` isn't what `scripts/configure.py --example` writes
+- a chart in this repo fails to lint or render with the examples, every component on or all off
+- a script has a syntax error (or `shellcheck` and `ruff` complain, if installed)
 
-`git commit --no-verify` skips it once.
+`git commit --no-verify` skips it once. `scripts/precommit.py --all` looks for those values in every tracked file instead, e.g. after adding a site setting.
+
+**On the cluster**, `scripts/check.py`, read-only:
+
+- every certificate is Ready, with more than 14 days left
+- every backup succeeded in the last 26 hours
+- every Prometheus target is up, every rule evaluates, nothing fires but Watchdog
+- every metric a rule or a Grafana dashboard reads is kept by the scrapes' `metricRelabelings`, which matters after bumping kube-prometheus-stack ([Monitoring](#monitoring))
+
+`scripts/check.py --test-alert` also sends a test alert to Discord, which resolves by itself.
 
 ## Exposing services
 
-Only HTTP(S) on ports 80 and 443 is reachable from the internet, through Traefik. To publish an app, give it an Ingress with a `host` and point that hostname's DNS at the cluster.
+Only HTTP(S) on ports 80 and 443 is reachable from the internet, through Traefik. To publish an app, give it an Ingress with a `host` (in `charts/app`: `ingress: {}` and a hostname under `hosts`) and point that hostname's DNS at the cluster.
 
 Requests by bare IP get Traefik's `404 page not found`. That's expected: no Ingress matches them.
 
 ### LAN-only services
 
-Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public one. DNS alone doesn't protect them: Traefik routes by `Host` header, so anyone who sends that header to the public IP reaches the service. Every LAN-only Ingress therefore attaches the namespace's `lan-only` Traefik middleware (`ipAllowList` for `network.lanCidr`), e.g. `traefik.ingress.kubernetes.io/router.middlewares: home-lan-only@kubernetescrd`. This works because Traefik's Service uses `externalTrafficPolicy: Local` (`infrastructure/base/chart`), which keeps the real client IP. Requests made from the node itself still show up with an internal IP and get 403, so test from another device.
+Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public one. DNS alone doesn't protect them: Traefik routes by `Host` header, so anyone who sends that header to the public IP reaches the service. Every LAN-only Ingress therefore attaches the namespace's `lan-only` Traefik middleware (`ipAllowList` for `network.lanCidr`), e.g. `traefik.ingress.kubernetes.io/router.middlewares: home-lan-only@kubernetescrd`; `charts/app` does it for `ingress: {lanOnly: true}`. This works because Traefik's Service uses `externalTrafficPolicy: Local` (`infrastructure/base/chart`), which keeps the real client IP. Requests made from the node itself still show up with an internal IP and get 403, so test from another device.
 
 ## Restore
 
@@ -149,7 +208,7 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
    ```sh
    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.36.5+k3s1 sh -
    ```
-2. Install the Helm CLI (v4), helmfile with the helm-diff plugin ([Apply](#apply)), and an NFS client (`apt install nfs-common`). kubelet needs the NFS client to mount the backup share.
+2. Install the Helm CLI (v4), helmfile with the helm-diff plugin ([Apply](#apply)), and an NFS client (`apt install nfs-common`), which kubelet needs to mount the NAS.
    With ufw (default deny incoming), allow the pod and service networks, which k3s needs anyway and which also covers Traefik reaching Home Assistant on the host network. Then allow HomeKit and mDNS from the LAN (`network.lanCidr`):
    ```sh
    ufw allow from 10.42.0.0/16 comment 'k3s pods'
@@ -162,11 +221,10 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
    ```sh
    mkdir -p ~/.kube && sudo install -m 600 -o "$USER" -g "$USER" /etc/rancher/k3s/k3s.yaml ~/.kube/config
    ```
-4. Put back your site directory (clone the private repo and set `CAIRN_SITE`, or copy the files into the repo root), or run `scripts/configure.py` to write `site.yaml`. Run it as well if the site changed (new IPs, NAS, Zigbee stick...).
-5. Put back `site.secret.yaml`, or write its keys one at a time: `scripts/secret.py set gandi.pat` (a Gandi PAT, see [TLS](#tls)) and `scripts/secret.py set discord.webhookUrl` (see [Monitoring](#monitoring)). Each asks for the value without echoing it and checks it with Gandi or Discord before writing it.
-6. `helmfile apply`
-7. Restore each app, and Grafana, from the NAS: `scripts/restore.sh <name> <YYYY-MM-DD>` (see [Backups](#backups)).
-8. `scripts/check.py`: certificates, backups, Prometheus targets, rules and alerts. `--test-alert` sends one to Discord.
+4. Put back the site directory (clone the private repo and set `CAIRN_SITE`, or copy the files into the repo root). Without it, `scripts/configure.py` writes `site.yaml`, and `scripts/secret.py set gandi.pat` and `scripts/secret.py set discord.webhookUrl` write `site.secret.yaml` ([Secrets](#secrets)). Run `configure.py` as well if the site changed (new IPs, NAS, Zigbee stick...).
+5. `helmfile apply`
+6. For each app, and `monitoring` (Grafana): `scripts/restore.sh <name> <YYYY-MM-DD>` ([Backups](#backups)).
+7. `scripts/check.py`, and `scripts/check.py --test-alert` to see alerts reach Discord.
 
 ## TLS
 
@@ -181,7 +239,7 @@ acme:
   defaultSolver: http01     # every other zone: HTTP-01 on port 80
 ```
 
-- `gandi`: DNS-01 via `cert-manager-webhook-gandi`, authenticated with a Gandi Personal Access Token (`site.secret.yaml`). Works for any hostname in the zone, LAN-only ones included.
+- `gandi`: DNS-01 via `cert-manager-webhook-gandi`, authenticated with a Gandi Personal Access Token (`site.secret.yaml`). Works for any hostname in the zone, LAN-only ones included. The webhook is installed only while a zone uses it.
 - `http01`: for zones whose DNS has no API (e.g. a domain registered at Wix). The hostname must already resolve to this node, and port 80 must reach Traefik. Let's Encrypt follows Traefik's HTTP-to-HTTPS redirect, and the challenge is answered over HTTPS.
 
 A domain on another DNS provider with an API needs a new entry under `solvers` (any cert-manager ACME solver) and its zone mapped to it in `site.yaml`; the templates don't change.
@@ -198,22 +256,21 @@ scripts/check.py                       # certificates still Ready
 
 ## Backups
 
-Every app with something to keep, and Grafana, gets a CronJob `backup` in its namespace (`charts/backup`). Every night at 04:00 it writes to the NAS export `backup.path` (`site.yaml`), under `<name>/YYYY-MM-DD/`:
+Every app or component with a `backup`, and every app with a database, gets a CronJob `backup` in its namespace (`charts/backup`). Every night at 04:00 it writes to the NAS export `backup.path` (`site.yaml`), under `<name>/YYYY-MM-DD/`:
 
-- `<pvc>.tar.gz` for each volume its `backup` lists (`app.yaml`, `component.yaml`, or its entry in `site.yaml`)
-- `database.dump` if it has a database: `pg_dump`, custom format
+- `<pvc>.tar.gz` for each volume under `backup.volumes`
+- `database.dump`, `pg_dump` in custom format, if it has a database
 
-It keeps 14 days (`keepDays`; `schedule` sets the time). A failed backup shows up in Discord as `KubeJobFailed`. What's in them:
+It keeps 14 days (`keepDays`; `schedule` sets the time). A failed backup shows up in Discord as `KubeJobFailed`, and in `scripts/check.py`. What's in them:
 
-- home: Zigbee2MQTT's data (the network key and paired devices, so restoring it avoids re-pairing everything) and Home Assistant's `.storage` (users, areas, integrations, groups, HomeKit) and automations, but not the history database.
-- immich: Immich's own nightly database dumps, uploads from the apps and user files. Not the thumbnails and encoded videos (Immich rebuilds them from the originals), nor the library, which is on the NAS already.
-- monitoring: Grafana's database (users, preferences, dashboards made in the UI).
-- each app with a database: its dump. An entry that's only a database gets backed up the same way.
+- home: Zigbee2MQTT's data (the network key and paired devices, so restoring it avoids re-pairing everything) and Home Assistant's `.storage` (users, areas, integrations, groups, HomeKit) and automations, but not the history database
+- immich: Immich's own nightly database dumps, uploads from the apps and user files; not the thumbnails and encoded videos, which Immich rebuilds from the originals, nor the library, which is on the NAS already
+- monitoring: Grafana's database (users, preferences, dashboards made in the UI)
+- each app with a database, including entries that are only a database: its dump
 
-`backup: false` in an entry turns it off.
+Back up now: `kubectl -n <namespace> create job --from=cronjob/backup backup-manual-$(date +%s)`.
 
-- Back up now: `kubectl -n <namespace> create job --from=cronjob/backup backup-manual-$(date +%s)`
-- Restore a day: `scripts/restore.sh <name> 2026-10-09`. It lists what it will restore and the workloads it will stop (those mounting the volumes, and with a database, those using its credentials), asks, stops them, restores the database (in one transaction; if anything fails, it stays as it was) and unpacks the archives over the volumes, then starts them again.
+Restore a day with `scripts/restore.sh <name> <YYYY-MM-DD>`. It lists what it will restore and the workloads it will stop (those mounting the volumes, and with a database, those using its credentials), and asks first. Then it stops them, restores the database in one transaction (if anything fails, it stays as it was), unpacks the archives over the volumes, and starts them again.
 
 ## Immich
 
@@ -233,12 +290,12 @@ Run the port-forward on a computer whose kubectl reaches the cluster (the node's
 
 ## Postgres
 
-`infrastructure/postgres` runs the CloudNativePG operator. Every app entry with a `database` gets its own Postgres cluster in its namespace (`charts/postgres-cluster`, release `postgres`): one instance, on a 5 GiB `lvm` volume. Separate clusters keep projects apart: each one restarts, upgrades and restores on its own, and one project's load can't fill another's disk. An entry can be just a database, for an app that doesn't run in this cluster (yet).
+`infrastructure/postgres` runs the CloudNativePG operator. Every app with a `database` gets its own Postgres cluster in its namespace (`charts/postgres-cluster`, release `postgres`): one instance, on a 5 GiB `lvm` volume. Separate clusters keep projects apart: each one restarts, upgrades and restores on its own, and one project's load can't fill another's disk. An entry can be just a database, for an app that doesn't run in this cluster (yet).
 
 In each of those namespaces:
 
 - `postgres-rw:5432` serves the database `app`, owned by the user `app`.
-- Secret `postgres-app` holds the credentials, generated on first start: `username`, `password`, `dbname`, `host`, `port`, and a ready-made `uri`. Point the app at it, e.g.
+- Secret `postgres-app` holds the credentials, generated on first start: `username`, `password`, `dbname`, `host`, `port`, and a ready-made `uri`. `charts/app` hands them to a workload with `database: true`; another chart can read them itself, e.g.
   ```yaml
   env:
     - name: DATABASE_URL
@@ -247,11 +304,9 @@ In each of those namespaces:
   ```
 - A NetworkPolicy lets in only that namespace's pods, plus the operator and Prometheus. Apps in other namespaces can't connect even with the password. A new pod's connections are refused for its first few seconds, until k3s adds it to the policy, so apps should retry the database on startup.
 
-To add one, add `database: {}` to an app's entry (or an entry of its own) and run `helmfile apply`. `database` takes `size` to grow it online (`notes: {database: {size: 20Gi}}`) and `image` to pin its version. Removing it only stops helmfile from managing that cluster, and even `helm uninstall` leaves the Cluster and its data in place. Deleting it takes `kubectl -n <namespace> delete cluster postgres`, which removes the data too.
+`database` takes `size` to grow it online (`notes: {database: {size: 20Gi}}`) and `image` to pin its version. Removing it only stops helmfile from managing that cluster, and even `helm uninstall` leaves the Cluster and its data in place. Deleting it takes `kubectl -n <namespace> delete cluster postgres`, which removes the data too. Each database is dumped nightly with its app's [backup](#backups).
 
-**Backups.** Every database is dumped nightly with its app's backup, and restored with `scripts/restore.sh <name> <YYYY-MM-DD>` ([Backups](#backups)).
-
-**Upgrades.** For a new minor version, change `image` in `charts/postgres-cluster/values.yaml` and run `helmfile apply`; CloudNativePG restarts each instance on it. A new major version works the same way, but CloudNativePG then stops the instance and upgrades the data in place with `pg_upgrade`, which takes a few minutes. Try it on one cluster first (`database.image` in its entry, e.g. the uat one), right after a dump, and run `ANALYZE` afterwards, since `pg_upgrade` doesn't carry over the planner statistics.
+**Upgrades.** For a new minor version, change `image` in `charts/postgres-cluster/values.yaml` and run `helmfile apply`; CloudNativePG restarts each instance on it. A new major version works the same way, but CloudNativePG then stops the instance and upgrades the data in place with `pg_upgrade`, which takes a few minutes. Try it on one cluster first (`database.image` in its entry, e.g. the uat one), right after a backup, and run `ANALYZE` afterwards, since `pg_upgrade` doesn't carry over the planner statistics.
 
 Grafana has CloudNativePG's dashboard, and Prometheus scrapes every instance.
 
@@ -259,39 +314,39 @@ Grafana has CloudNativePG's dashboard, and Prometheus scrapes every instance.
 
 `infrastructure/monitoring` runs everything in namespace `monitoring`:
 
-- kube-prometheus-stack: Prometheus (15 days, at most 18 GB, on a 20 GiB volume), Alertmanager, Grafana, node-exporter and kube-state-metrics. Scrapes of etcd, the scheduler, the controller-manager and kube-proxy are off: k3s runs them inside its own process without exposing their metrics. Prometheus picks up ServiceMonitors, PodMonitors and rules from every namespace. Of the cluster's own metrics it keeps only what the chart's rules and dashboards read, about 18k series instead of 113k: k3s serves every component's metrics at both the apiserver and the kubelet endpoint, so each of those jobs keeps only its own, and Grafana's, cAdvisor's and kube-state-metrics' unused families are dropped (`metricRelabelings` in `kube-prometheus-stack.yaml`). A chart upgrade can bring rules or dashboards that read a dropped metric, so check them against those lists when bumping it.
+- kube-prometheus-stack: Prometheus (15 days, at most 18 GB, on a 20 GiB volume), Alertmanager, Grafana, node-exporter and kube-state-metrics. Scrapes of etcd, the scheduler, the controller-manager and kube-proxy are off: k3s runs them inside its own process without exposing their metrics. Prometheus picks up ServiceMonitors, PodMonitors and rules from every namespace.
 - Loki: a single binary on a 10 GiB volume, keeping 14 days of logs. It takes at most 100 KB/s, so a pod stuck in a log loop can't fill the volume quickly.
 - Alloy: ships every pod's logs to Loki through the Kubernetes API.
 - `chart/`: Grafana's LAN-only Ingress at `grafana.hostname` from `site.yaml`, and the Discord webhook's Secret.
 
-Grafana comes with Prometheus, Alertmanager and Loki as data sources, and the usual Kubernetes and node dashboards. Log in as `admin`; the password is generated on first install:
+**What Prometheus keeps.** Of the cluster's own metrics, only what the chart's rules and dashboards read: about 18k series instead of 113k. k3s serves every component's metrics at both the apiserver and the kubelet endpoint, so each of those jobs keeps only its own, and Grafana's, cAdvisor's and kube-state-metrics' unused families are dropped (`metricRelabelings` in `kube-prometheus-stack.yaml`). A chart upgrade can bring rules or dashboards that read a dropped metric: `scripts/check.py` names them. Helm installs the chart's CRDs only on the first install, so after bumping its version, apply the new CRDs first, as its upgrade notes describe.
+
+**Grafana** comes with Prometheus, Alertmanager and Loki as data sources, and the usual Kubernetes and node dashboards. Log in as `admin`; the password is generated on first install:
 
 ```sh
 kubectl -n monitoring get secret kube-prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d
 ```
 
-Change it with `scripts/set-grafana-password.sh`, not in Grafana's UI. The sidecars that make Grafana reload dashboards and data sources log in with the Secret's copy, and the script sets both. After a rebuild, `scripts/restore.sh monitoring <YYYY-MM-DD>` brings back Grafana's database, your password included, but the Secret holds a newly generated one: run the script once more so both match.
+Change it with `scripts/set-grafana-password.sh`, not in Grafana's UI: the sidecars that make Grafana reload dashboards and data sources log in with the Secret's copy, and the script sets both. After a rebuild, `scripts/restore.sh monitoring <YYYY-MM-DD>` brings back Grafana's database with your password, while the Secret holds a newly generated one: run the script once more so both match.
 
 **Alerts** go to a Discord channel: every alert from kube-prometheus-stack's default rules (a volume filling up, a pod crash-looping, a node running out of memory...), grouped by namespace, again every 12 hours while it keeps firing, and once more when it resolves. Watchdog, which always fires to prove the pipeline works, is not sent. The routing is in `infrastructure/monitoring/kube-prometheus-stack.yaml` (`alertmanager.config`). To set up or switch the channel, copy its webhook URL (channel settings > Integrations > Webhooks > New Webhook > Copy Webhook URL), then:
 
 ```sh
 scripts/secret.py set discord.webhookUrl          # checks it with Discord, then writes it
-helmfile apply -l component=monitoring            # the Secret, and Alertmanager reloads it
+helmfile apply -l component=monitoring            # the Secret; Alertmanager reloads it
 scripts/check.py --test-alert                     # [FIRING] in ~30 s, [RESOLVED] in 5-7 min
 ```
-
-Helm installs kube-prometheus-stack's CRDs only on the first install. After bumping its version, apply the new CRDs first, as its upgrade notes describe.
 
 ## Storage
 
 Two StorageClasses, both on the node's disk:
 
-- `lvm` (`infrastructure/base/chart`, provisioned by OpenEBS LVM LocalPV): each volume is an LVM logical volume of exactly its requested size, in the volume group `lvm.volumeGroup` from `site.yaml`. The size is a hard cap: past it, writes fail with "no space left" and the root filesystem isn't touched. Like `local-path`, a volume can be mounted by more than one pod on the node (`shared`), so the nightly backup reads it while its app runs. For volumes that keep growing: Prometheus (20 GiB), Loki (10 GiB), Immich's thumbnails and encoded videos (40 GiB), its Postgres (10 GiB) and model cache (10 GiB), each Postgres cluster (5 GiB by default).
-- `local-path` (k3s's default): a directory on the root filesystem. The requested size is neither enforced nor reserved. For the small volumes that stay small: Home Assistant, Zigbee2MQTT, Grafana. Mounting them needs nothing but the node, so the home automation starts even when the LVM driver doesn't.
+- `lvm` (`infrastructure/base/chart`, provisioned by OpenEBS LVM LocalPV): each volume is an LVM logical volume of exactly its requested size, in the volume group `lvm.volumeGroup` from `site.yaml`. The size is a hard cap: past it, writes fail with "no space left" and the root filesystem isn't touched. Like `local-path`, a volume can be mounted by more than one pod on the node (`shared`), so the nightly backup reads it while its app runs. For volumes that keep growing: Prometheus (20 GiB), Loki (10 GiB), Immich's data (40 GiB), its Postgres (10 GiB) and model cache (10 GiB), each Postgres cluster (5 GiB by default).
+- `local-path` (k3s's default): a directory on the root filesystem. The requested size is neither enforced nor reserved. For the volumes that stay small: Home Assistant, Zigbee2MQTT, Grafana. Mounting them needs nothing but the node, so the home automation starts even when the LVM driver doesn't.
 
-The `lvm` volumes can only use the volume group's unallocated space. Volumes grow online, without restarting anything:
+A PVC's class can't change in place: moving a volume to another class means a new PVC and copying the data. The `lvm` volumes can only use the volume group's unallocated space, and grow online, without restarting anything:
 
-- Immich: raise `storage.<volume>.size` (in `apps/immich/chart/values.yaml`, or `apps.immich.storage` in `site.yaml`) and run `helmfile apply`.
+- Immich: raise `storage.<volume>.size` (in `apps/immich/chart/values.yaml`, or under `apps.immich` in `site.yaml`) and run `helmfile apply`.
 - Prometheus, Loki: a StatefulSet doesn't resize the PVCs it already made, so patch the PVC, e.g. `kubectl -n monitoring patch pvc storage-loki-0 -p '{"spec":{"resources":{"requests":{"storage":"20Gi"}}}}'`. Then raise the size in `infrastructure/monitoring/<release>.yaml` too, so a rebuild gets the same. Loki's upgrade fails on that change (a StatefulSet can't change its volume template), so first delete the StatefulSet alone: `kubectl -n monitoring delete statefulset loki --cascade=orphan` (the pod keeps running), then run `helmfile apply -l name=loki`. Prometheus's operator recreates its StatefulSet by itself (Prometheus restarts).
 
 When the volume group runs out, it needs more space from the host: a new disk added to the group, or a smaller root logical volume. Shrinking root has to happen offline (ext4 can grow while mounted but not shrink), e.g. from a live USB: `e2fsck -f`, then `lvreduce --resizefs`. Back up first.
@@ -301,6 +356,6 @@ When the volume group runs out, it needs more space from the host: a new disk ad
 Kubernetes Secrets are base64, not encryption. **Plaintext secrets are never committed.**
 
 - Secret values go in `site.secret.yaml` in the site directory; in the repo root it's gitignored (`*.secret.yaml`). `site.secret.example.yaml` lists the keys with placeholder values.
-- Any value there can instead be a reference that helmfile resolves when it renders ([vals](https://github.com/helmfile/vals), built into helmfile): `ref+sops://secrets.enc.yaml#/gandi/pat` (a SOPS-encrypted file, key from `SOPS_AGE_KEY_FILE`), `ref+op://<vault>/<item>/<field>` (1Password), `ref+envsubst://$VAR`, and more. A plain value is used as it is. A file path in a reference is relative to where you run helmfile.
 - `scripts/secret.py set <key>` writes one key and keeps the others, asking for the value without echoing it. It checks the Gandi PAT and the Discord webhook with their services before writing them.
-- helmfile passes it to the cluster chart (the Gandi PAT) and the monitoring chart (the Discord webhook), and each app gets its own section, `apps.<name>` (merged over its entry; `charts/app` turns `secrets` into a Secret). The charts put secrets only in Secrets, which `helmfile diff` masks. Helm also keeps a copy in each release record, a Secret in the release's namespace.
+- Any value can instead be a reference that helmfile resolves when it renders ([vals](https://github.com/helmfile/vals), built into helmfile): `ref+sops://secrets.enc.yaml#/gandi/pat` (a SOPS-encrypted file, key from `SOPS_AGE_KEY_FILE`), `ref+op://<vault>/<item>/<field>` (1Password), `ref+envsubst://$VAR`, and more. A file path in a reference is relative to where you run helmfile.
+- The cluster chart gets the Gandi PAT and the monitoring chart the Discord webhook; each app gets only its own section, `apps.<name>` (`charts/app` turns its `secrets` into a Secret). Templates put secrets only in Secrets, which `helmfile diff` masks. Helm also keeps a copy in each release record, a Secret in the release's namespace.

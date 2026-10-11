@@ -1,4 +1,4 @@
-# site.yaml: infrastructure.monitoring. Fields: infrastructure/base/component.yaml.
+# On with infrastructure.monitoring in site.yaml. Fields: README "Components and apps".
 description: Prometheus, Alertmanager, Grafana, Loki and Alloy; alerts go to Discord (site.secret.yaml discord.webhookUrl)
 repositories:
   prometheus-community: https://prometheus-community.github.io/helm-charts
@@ -29,17 +29,13 @@ releases:
     site: secrets
     needs: [monitoring/kube-prometheus-stack]
 
-# Release backup (charts/backup) in this namespace: Grafana's volume (its database: users,
-# preferences, dashboards made in the UI). Fields as in apps/home/app.yaml, plus namespace and needs.
+# Grafana's volume: its database (users, preferences, dashboards made in the UI).
 backup:
   namespace: monitoring
   needs: [monitoring/kube-prometheus-stack]
   volumes:
     kube-prometheus-stack-grafana: {}
 
-# Site settings this component reads, asked by scripts/configure.py while it's on:
-#   key (dotted path in site.yaml): comment, ask (the question), example (site.example.yaml),
-#   check (a validator in configure.py), default, detect (a detector in configure.py)
 site:
   grafana.hostname:
     comment: "LAN only: its DNS record points at network.nodeIp."

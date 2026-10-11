@@ -1,6 +1,6 @@
-# Chart defaults: versions and the like. Site settings (hostname, NAS, library path) come from
-# site.yaml in the site directory: the shared sections, then apps.immich, which can override these
-# too (helmfile.yaml.gotmpl). Bump the images together, then run helmfile apply.
+# Defaults for immich: versions and sizes. Its settings (hostname, libraryPath) come from
+# apps.immich in site.yaml, which can override these too (README "Components and apps"). Bump the
+# images together, then run helmfile apply.
 images:
   server: ghcr.io/immich-app/immich-server:v3.2.4
   machineLearning: ghcr.io/immich-app/immich-machine-learning:v3.2.4

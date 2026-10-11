@@ -210,36 +210,6 @@ def definitions(kind, spec_file):
     return found
 
 
-def migrate(cur):
-    """Read a site.yaml from before infrastructure: and apps: (components:, homeAssistant:,
-    zigbee:, immich:, postgres.clusters) as the current shape, to offer its values as defaults."""
-    comp = cur.get("components")
-    if not isinstance(comp, dict):
-        return cur
-    cur = dict(cur)
-    cur.pop("components")
-    cur.setdefault("infrastructure", {n: comp[n] for n in ("monitoring", "postgres") if n in comp})
-    apps = cur.setdefault("apps", {})
-    if comp.get("home"):
-        apps["home"] = {"hostname": lookup(cur, "homeAssistant.hostname"), "zigbee": cur.get("zigbee") or {}}
-    if comp.get("immich"):
-        apps["immich"] = {k: lookup(cur, f"immich.{k}") for k in ("hostname", "libraryPath")}
-    for ns, settings in (lookup(cur, "postgres.clusters") or {}).items():
-        apps[ns] = {"database": settings or {}}
-    for key in ("homeAssistant", "zigbee", "immich"):
-        cur.pop(key, None)
-    return cur
-
-
-def migrate_backup(cur):
-    """Before charts/backup, home's backups went to nas.path and the dumps to postgres.backupPath."""
-    if not lookup(cur, "backup.path"):
-        old = lookup(cur, "nas.path") or lookup(cur, "postgres.backupPath")
-        if old:
-            cur = {**cur, "backup": {"path": old}}
-    return cur
-
-
 def q(v):
     return yaml.safe_dump(v, default_flow_style=True, allow_unicode=True, width=1000).strip().removesuffix("\n...")
 
@@ -303,7 +273,7 @@ def main():
     if example:
         cur = {"apps": {"shop": {"database": {}}, "shop-staging": {"database": {}}, "notes": {"database": {"size": "2Gi"}}}}
     else:
-        cur = migrate_backup(migrate(yaml.safe_load(out.read_text()) or {})) if out.exists() else {}
+        cur = (yaml.safe_load(out.read_text()) or {}) if out.exists() else {}
         print(f"設定 {out}：直接按 Enter 採用 [ ] 裡的值。\n")
     get = lambda key: lookup(cur, key)  # noqa: E731
     cur_apps = cur.get("apps") or {}

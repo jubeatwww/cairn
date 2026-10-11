@@ -1,6 +1,5 @@
-# site.yaml: infrastructure.postgres. Fields: infrastructure/base/component.yaml and
-# infrastructure/monitoring/component.yaml. Each app with a database (apps.<name>.database) gets its
-# own cluster from charts/postgres-cluster.
+# On with infrastructure.postgres in site.yaml. Each app with a database gets its own cluster from
+# charts/postgres-cluster. Fields: README "Components and apps".
 description: CloudNativePG, for the apps' Postgres clusters
 repositories:
   cnpg: https://cloudnative-pg.github.io/charts

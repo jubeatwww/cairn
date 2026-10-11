@@ -70,7 +70,7 @@ apps:
     # Public, so albums can be shared.
     hostname: immich.example.com
     # NFS export on nas.server with the photo library, mounted as an external library.
-    libraryPath: /volume1/photos
+    libraryPath: /volume1/pictures
   shop:
     database: {}
   shop-staging:

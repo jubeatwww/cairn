@@ -7,7 +7,7 @@ k3s.yaml
 
 .env
 
-# Python bytecode (scripts/configure.py)
+# Python bytecode (scripts/*.py)
 __pycache__/
 
 # Site settings describe the home network; the public repo only has site.example.yaml. With no
