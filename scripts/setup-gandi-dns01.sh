@@ -77,14 +77,9 @@ printf '%s' "$pat" | "$REPO/scripts/secret.py" set gandi.pat
 
 # 4. cert-manager and the webhook first (CRDs), then the chart with the ClusterIssuers and the Secret
 ((${#as[@]} == 0)) || { step "sudo 驗證"; sudo -v; }
-step "安裝 cert-manager"
-"${as[@]}" "$REPO/helm/cert-manager/install.sh"
-step "安裝 cert-manager-webhook-gandi"
-"${as[@]}" "$REPO/helm/cert-manager-webhook-gandi/install.sh"
-step "安裝 charts/cluster（ClusterIssuer、Gandi Secret）"
-site_values cluster --secrets
-"${as[@]}" helm upgrade --install cluster "$REPO/charts/cluster" --namespace kube-system \
-  "${values[@]}" --wait --timeout 5m > /dev/null
+step "安裝 cert-manager、cert-manager-webhook-gandi、charts/cluster（ClusterIssuer、Gandi Secret）"
+"${as[@]}" "$(command -v helmfile)" -f "$REPO/helmfile.yaml.gotmpl" sync \
+  -l name=cert-manager -l name=cert-manager-webhook-gandi -l name=cluster > /dev/null
 
 step "等待 webhook API 與 ClusterIssuer 就緒"
 k wait --for=condition=Available apiservice/v1alpha1.acme.bwolf.me --timeout=2m

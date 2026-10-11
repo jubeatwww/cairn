@@ -16,8 +16,8 @@ Working notes for agents. Read [README.md](README.md) first for the cluster spec
 
 - Site directory: `site.yaml`, `site.secret.yaml` and the optional overrides `values/<release>.yaml`, in `$CAIRN_SITE` or else the repo root. Scripts source `scripts/lib.sh` (before any `cd`) for `$SITE` and `site_values`, never a path built from the repo root.
 - `site.yaml`: every site-specific value, each with a comment saying what it's for. `scripts/configure.py` generates it from questions. A new key goes in four places: `site.yaml`, `site.example.yaml` (placeholder value, same keys), a question plus the file template in `scripts/configure.py` (running it with all defaults must report no changes), and the chart template, referenced with `required "<key> is required (site.yaml)"` so a missing value fails the render with a clear message. A key only one component uses gets its question and section only while that component is on.
-- `components` in `site.yaml`: one true/false per app (`home`, `immich`, `monitoring`, `postgres`). A new app gets one: the key in the four places above, its name in `scripts/apply.sh`'s list, and its installs there behind `on <name>`. A template that needs another component's CRDs (a PodMonitor needs `monitoring`) renders only when `.Values.components.<name>` is true. The base (cert-manager, LVM LocalPV, `charts/cluster`) has no flag; the Gandi webhook follows `acme.zones`.
-- `values/<release>.yaml`: a site's override of a release's chart defaults, passed after everything else. Every `helm upgrade` or `helm template` of a local chart takes its `--values` from `site_values`, and every `helm/*/install.sh` adds its own override, so a standalone run matches `scripts/apply.sh`.
+- `components` in `site.yaml`: one true/false per app (`home`, `immich`, `monitoring`, `postgres`). A new app gets one: the key in the four places above, its name in `helmfile.yaml.gotmpl`'s list, and its releases there behind `$components.<name>`. A template that needs another component's CRDs (a PodMonitor needs `monitoring`) renders only when `.Values.components.<name>` is true. The base (cert-manager, LVM LocalPV, `charts/cluster`) has no flag; the Gandi webhook follows `acme.zones`.
+- `values/<release>.yaml`: a site's override of a release's chart defaults, passed after everything else (helmfile's release templates). A script that renders a local chart on its own takes its `--values` from `site_values`, so it matches helmfile.
 - `charts/<name>/`: local charts for this cluster, rendered with `site.yaml`.
   - `charts/cluster/`: cluster-wide pieces. `charts/home/`: the home automation stack in namespace `home`. `charts/immich/`: Immich in namespace `immich`, public. `charts/monitoring/`: site glue (Grafana's Ingress) for the third-party monitoring releases in `helm/`. `charts/postgres/`: one CloudNativePG cluster, installed once per namespace listed in `site.yaml`'s `postgres.clusters`. Those names stay in `site.yaml`.
   - When a third-party chart needs site values (a hostname, a CIDR), keep its `helm/<release>/values.yaml` site-free and put the site-dependent objects (Ingress, Middleware) in a local chart instead.
@@ -30,9 +30,9 @@ Working notes for agents. Read [README.md](README.md) first for the cluster spec
   - PVCs carry `helm.sh/resource-policy: keep`, so uninstalling a release never deletes data.
   - PVCs that keep growing (metrics, logs, thumbnails, databases) use the StorageClass `lvm`, which caps them at their size; small ones use `local-path`. Set the class and size in the chart's `values.yaml`. A PVC's class can't change in place (README "Storage").
   - An `lvm` volume is a fresh ext4 filesystem with `lost+found` at its root. Apps that want an empty directory (Postgres's `PGDATA`) get a subdirectory of the mount.
-- `helm/<release>/`: third-party charts, one directory per release, holding `values.yaml` and an idempotent `install.sh`. Example: `helm/cert-manager/`.
-  - `install.sh` runs `helm upgrade --install` with `--repo` and an exact `--version`, so it needs no `helm repo add` state and gives the same result on a fresh machine. After `values.yaml` it passes the site's `values/<release>.yaml` if there is one (copy those lines from an existing `install.sh`).
-  - Use the helm CLI (v4). Don't use k3s's `HelmChart` resource.
+- `helm/<release>/values.yaml`: a third-party chart's values, one directory per release. Example: `helm/cert-manager/`.
+- `helmfile.yaml.gotmpl`: every release, local or third-party, with an exact chart `version`, its namespace, timeout and `needs` (dependency order). A component's releases sit behind its `components` flag. Third-party releases inherit the `override` template (their `helm/<release>/values.yaml`, then the site's override); local charts `site` or `siteSecrets`.
+  - Use helmfile and the helm CLI (v4). Don't use k3s's `HelmChart` resource.
 - `scripts/`: helpers the user runs by hand. Idempotent; read site values from the site directory's `site.yaml` (or take them as arguments that default to it); find the repo root and the site directory through `scripts/lib.sh`. A cluster command run through `sudo` passes `CAIRN_SITE=$SITE` along, since sudo drops the environment.
 
 ## Secrets
@@ -43,14 +43,14 @@ Working notes for agents. Read [README.md](README.md) first for the cluster spec
 ## Validate and apply
 
 - The k3s kubeconfig is root-only. On the node, the user may have copied it to `~/.kube/config`; if it exists, agents use `KUBECONFIG=~/.kube/config` to inspect the cluster. Applying or deleting anything still needs the user's OK first.
-- Before applying, check the charts. Rendering and linting need no cluster access (with `CAIRN_SITE` set, use its `site.yaml` and `values/home.yaml`):
+- Before applying, check the charts. Rendering and linting need no cluster access:
   ```sh
   helm lint charts/home -f site.yaml
-  helm template home charts/home -n home -f site.yaml
+  helmfile template -l name=home
   ```
-- See what would change in the cluster, then validate server-side:
+- See what would change in the cluster (`helmfile diff` needs the helm-diff plugin), then apply:
   ```sh
-  helm template home charts/home -n home -f site.yaml | kubectl diff -f -
-  scripts/apply.sh --dry-run
+  helmfile diff
+  helmfile apply
   ```
-- Apply with `scripts/apply.sh`. Third-party releases can still be installed on their own with `helm/<release>/install.sh`; render them first with `helm template <release> <chart> --repo <repo> --version <version> -f helm/<release>/values.yaml`.
+  `-l name=<release>` limits either to one release.

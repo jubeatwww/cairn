@@ -1,0 +1,165 @@
+# Everything this repo installs, in dependency order, rendered with the site directory: $CAIRN_SITE
+# (absolute), else the repo root. Run from anywhere:
+#
+#   helmfile -f <repo>/helmfile.yaml.gotmpl diff     what would change (needs the helm-diff plugin)
+#   helmfile -f <repo>/helmfile.yaml.gotmpl apply    install or upgrade what changed
+#
+# Uses $KUBECONFIG, else ~/.kube/config.
+{{- $site := env "CAIRN_SITE" | default "." }}
+environments:
+  default:
+    values:
+      - {{ $site }}/site.yaml
+---
+{{- $site := env "CAIRN_SITE" | default "." }}
+{{- $components := required "components is required (site.yaml): run scripts/configure.py" .Values.components }}
+{{- range $name := list "home" "immich" "monitoring" "postgres" }}
+{{- if not (kindIs "bool" (index $components $name)) }}
+{{- fail (printf "components.%s must be true or false (site.yaml): run scripts/configure.py" $name) }}
+{{- end }}
+{{- end }}
+{{- $acme := .Values.acme | default dict }}
+{{- $gandi := has "gandi" (append (values ($acme.zones | default dict)) ($acme.defaultSolver | default "")) }}
+{{- $pg := ((.Values.postgres | default dict).clusters | default dict) }}
+
+helmDefaults:
+  wait: true
+  timeout: 300
+  createNamespace: true
+
+repositories:
+  - name: jetstack
+    url: https://charts.jetstack.io
+  - name: sintef
+    url: https://sintef.github.io/cert-manager-webhook-gandi
+  - name: openebs-lvm
+    url: https://openebs.github.io/lvm-localpv
+  - name: prometheus-community
+    url: https://prometheus-community.github.io/helm-charts
+  - name: grafana
+    url: https://grafana.github.io/helm-charts
+  - name: cnpg
+    url: https://cloudnative-pg.github.io/charts
+
+# A release's values: its chart's defaults, then site.yaml (and site.secret.yaml for the charts
+# that turn secrets into Secrets), then the site's override values/<release>.yaml if there is one.
+templates:
+  site:
+    missingFileHandler: Debug
+    values:
+      - {{ $site }}/site.yaml
+      - {{ $site }}/values/{{`{{ .Release.Name }}`}}.yaml
+  siteSecrets:
+    missingFileHandler: Debug
+    values:
+      - {{ $site }}/site.yaml
+      - {{ $site }}/site.secret.yaml
+      - {{ $site }}/values/{{`{{ .Release.Name }}`}}.yaml
+  override:
+    missingFileHandler: Debug
+    values:
+      - helm/{{`{{ .Release.Name }}`}}/values.yaml
+      - {{ $site }}/values/{{`{{ .Release.Name }}`}}.yaml
+
+releases:
+  # cert-manager first: its CRDs back the ClusterIssuers and Certificates in the local charts.
+  - name: cert-manager
+    namespace: cert-manager
+    chart: jetstack/cert-manager
+    version: v1.21.2
+    inherit: [{template: override}]
+{{- if $gandi }}
+  # Only when a zone uses the gandi solver.
+  - name: cert-manager-webhook-gandi
+    namespace: cert-manager
+    chart: sintef/cert-manager-webhook-gandi
+    version: v0.6.0
+    inherit: [{template: override}]
+    needs: [cert-manager/cert-manager]
+{{- end }}
+  - name: lvm-localpv
+    namespace: openebs
+    chart: openebs-lvm/lvm-localpv
+    version: 1.10.1
+    inherit: [{template: override}]
+  # The ClusterIssuers, and the StorageClass lvm the other volumes use.
+  - name: cluster
+    namespace: kube-system
+    chart: ./charts/cluster
+    inherit: [{template: siteSecrets}]
+    needs:
+      - cert-manager/cert-manager
+{{- if $gandi }}
+      - cert-manager/cert-manager-webhook-gandi
+{{- end }}
+      - openebs/lvm-localpv
+
+{{- if $components.monitoring }}
+  # kube-prometheus-stack brings the ServiceMonitor and PodMonitor CRDs.
+  - name: kube-prometheus-stack
+    namespace: monitoring
+    chart: prometheus-community/kube-prometheus-stack
+    version: 91.9.0
+    timeout: 600
+    inherit: [{template: override}]
+    needs: [kube-system/cluster]
+  - name: loki
+    namespace: monitoring
+    chart: grafana/loki
+    version: 7.3.0
+    timeout: 600
+    inherit: [{template: override}]
+    needs: [monitoring/kube-prometheus-stack]
+  - name: alloy
+    namespace: monitoring
+    chart: grafana/alloy
+    version: 1.13.0
+    inherit: [{template: override}]
+    needs: [monitoring/loki]
+  # Grafana's Ingress and the Discord webhook's Secret.
+  - name: monitoring
+    namespace: monitoring
+    chart: ./charts/monitoring
+    inherit: [{template: siteSecrets}]
+    needs: [monitoring/kube-prometheus-stack]
+{{- end }}
+
+{{- if $components.postgres }}
+  - name: cloudnative-pg
+    namespace: cnpg-system
+    chart: cnpg/cloudnative-pg
+    version: 0.29.1
+    inherit: [{template: override}]
+    needs:
+      - kube-system/cluster
+{{- if $components.monitoring }}
+      - monitoring/kube-prometheus-stack
+{{- end }}
+  # One Postgres cluster per namespace in site.yaml's postgres.clusters.
+{{- range $ns, $_ := $pg }}
+  - name: postgres
+    namespace: {{ $ns }}
+    chart: ./charts/postgres
+    timeout: 600
+    inherit: [{template: site}]
+    needs: [cnpg-system/cloudnative-pg]
+{{- end }}
+{{- end }}
+
+{{- if $components.home }}
+  - name: home
+    namespace: home
+    chart: ./charts/home
+    timeout: 600
+    inherit: [{template: site}]
+    needs: [kube-system/cluster]
+{{- end }}
+
+{{- if $components.immich }}
+  - name: immich
+    namespace: immich
+    chart: ./charts/immich
+    timeout: 900
+    inherit: [{template: site}]
+    needs: [kube-system/cluster]
+{{- end }}

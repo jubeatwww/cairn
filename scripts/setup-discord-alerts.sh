@@ -57,11 +57,9 @@ printf '%s' "$url" | "$REPO/scripts/secret.py" set discord.webhookUrl
 # 4. The Secret first: Alertmanager's pod mounts it.
 ((${#as[@]} == 0)) || { step "sudo 驗證"; sudo -v; }
 step "安裝 charts/monitoring（webhook 的 Secret）"
-site_values monitoring --secrets
-"${as[@]}" helm upgrade --install monitoring "$REPO/charts/monitoring" --namespace monitoring --create-namespace \
-  "${values[@]}" --wait --timeout 5m > /dev/null
+"${as[@]}" "$(command -v helmfile)" -f "$REPO/helmfile.yaml.gotmpl" sync -l name=monitoring,namespace=monitoring > /dev/null
 step "安裝 kube-prometheus-stack（Alertmanager 設定）"
-"${as[@]}" "$REPO/helm/kube-prometheus-stack/install.sh" > /dev/null
+"${as[@]}" "$(command -v helmfile)" -f "$REPO/helmfile.yaml.gotmpl" sync -l name=kube-prometheus-stack > /dev/null
 
 step "等待 Alertmanager 載入新設定"
 k -n monitoring rollout status statefulset/alertmanager-kube-prometheus-stack-alertmanager --timeout=3m

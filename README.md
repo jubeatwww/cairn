@@ -28,9 +28,10 @@ charts/home/        local chart: Mosquitto, Zigbee2MQTT, Home Assistant, nightly
 charts/immich/      local chart: Immich, public, with the photo library on the NAS
 charts/monitoring/  local chart: Grafana's LAN-only Ingress, for the monitoring stack in helm/
 charts/postgres/    local chart: one Postgres cluster per namespace in site.yaml, with nightly dumps
-helm/<release>/     third-party charts: values.yaml + install.sh (cert-manager, the Gandi webhook,
-                    OpenEBS LVM LocalPV, kube-prometheus-stack, Loki, Alloy, CloudNativePG)
-scripts/            helpers you run by hand: configure, apply, Gandi and Discord setup, restore,
+helm/<release>/     third-party charts' values (cert-manager, the Gandi webhook, OpenEBS LVM LocalPV,
+                    kube-prometheus-stack, Loki, Alloy, CloudNativePG)
+helmfile.yaml.gotmpl  every release, with its chart version and values, in dependency order
+scripts/            helpers you run by hand: configure, Gandi and Discord setup, restore,
                     Grafana's password
 ```
 
@@ -43,13 +44,13 @@ The local charts hold templates only. Every site-specific value comes from `site
 ```sh
 export CAIRN_SITE=~/cairn-site   # holds site.yaml, site.secret.yaml, values/
 scripts/configure.py             # writes $CAIRN_SITE/site.yaml
-scripts/apply.sh
+helmfile apply
 ```
 
-To pin which version of this repo a site runs, add it to the private repo as a git submodule at a tag, and run `CAIRN_SITE=. cairn/scripts/apply.sh` from there. Think twice before committing `site.secret.yaml` in plaintext to a hosted repo, even a private one.
+To pin which version of this repo a site runs, add it to the private repo as a git submodule at a tag, and run `CAIRN_SITE=$PWD helmfile -f cairn/helmfile.yaml.gotmpl apply` from there. `CAIRN_SITE` must be absolute for helmfile. Think twice before committing `site.secret.yaml` in plaintext to a hosted repo, even a private one.
 
-- **`components`** in `site.yaml` turns each app on or off: `home`, `immich`, `monitoring`, `postgres`. cert-manager, LVM LocalPV and `charts/cluster` always go in, and the Gandi webhook whenever a zone uses the `gandi` solver. `scripts/configure.py` only asks what the components that are on need. Turning one off only stops `scripts/apply.sh` from managing it: `helm uninstall` removes it and keeps its volumes.
-- **`values/<release>.yaml`** overrides a release's chart defaults, for a local chart (`values/home.yaml` over `charts/home/values.yaml`) or a third-party one (`values/loki.yaml` over `helm/loki/values.yaml`). It goes last, after `site.yaml`, so it wins (maps merge, lists replace). The scripts and every `helm/*/install.sh` pick it up. A longer Prometheus retention, say, without touching this repo:
+- **`components`** in `site.yaml` turns each app on or off: `home`, `immich`, `monitoring`, `postgres`. cert-manager, LVM LocalPV and `charts/cluster` always go in, and the Gandi webhook whenever a zone uses the `gandi` solver. `scripts/configure.py` only asks what the components that are on need. Turning one off only stops helmfile from managing it: `helm uninstall` removes it and keeps its volumes.
+- **`values/<release>.yaml`** overrides a release's chart defaults, for a local chart (`values/home.yaml` over `charts/home/values.yaml`) or a third-party one (`values/loki.yaml` over `helm/loki/values.yaml`). It goes last, after `site.yaml`, so it wins (maps merge, lists replace). A longer Prometheus retention, say, without touching this repo:
   ```yaml
   # values/kube-prometheus-stack.yaml
   prometheus:
@@ -62,14 +63,17 @@ Keep a copy of the site directory somewhere safe (a private repo, a password man
 
 ## Apply
 
+With [helmfile](https://github.com/helmfile/helmfile) v1.8 and the [helm-diff](https://github.com/databus23/helm-diff) plugin (v3.15.10 or later; Helm 4 verifies its signature, see its README), from the repo root:
+
 ```sh
-scripts/apply.sh --dry-run   # validate the local charts against the cluster, change nothing
-scripts/apply.sh             # install or upgrade everything
+helmfile diff                       # what would change in the cluster
+helmfile apply                      # install or upgrade what changed
+helmfile apply -l name=loki         # one release
 ```
 
-It installs in dependency order: cert-manager and, if a zone uses the `gandi` solver, its Gandi webhook (their CRDs back the ClusterIssuers and Certificates), OpenEBS LVM LocalPV, then `charts/cluster` (the ClusterIssuers, and the StorageClass `lvm` the other volumes use). Then what `components` turns on: kube-prometheus-stack (ServiceMonitor CRDs), Loki and Alloy for `monitoring`, CloudNativePG for `postgres`, then `charts/home`, `charts/immich` and `charts/monitoring`, and last `charts/postgres` once per cluster in `postgres.clusters`. Each local chart gets `site.yaml`, `site.secret.yaml` if it turns secrets into Secrets, then its override from `values/` ([Site directory](#site-directory)). A dry run skips the releases in `helm/`. For the kubeconfig it uses `$KUBECONFIG`, then `~/.kube/config`, then k3s's root-only `/etc/rancher/k3s/k3s.yaml` (run it with sudo, which drops `CAIRN_SITE`: `sudo env CAIRN_SITE="$CAIRN_SITE" scripts/apply.sh`).
+`helmfile.yaml.gotmpl` installs in dependency order: cert-manager and, if a zone uses the `gandi` solver, its Gandi webhook (their CRDs back the ClusterIssuers and Certificates), OpenEBS LVM LocalPV, then `charts/cluster` (the ClusterIssuers, and the StorageClass `lvm` the other volumes use). Then what `components` turns on: kube-prometheus-stack (ServiceMonitor CRDs), Loki and Alloy for `monitoring`, CloudNativePG for `postgres`, then `charts/home`, `charts/immich` and `charts/monitoring`, and last `charts/postgres` once per cluster in `postgres.clusters`. Each local chart gets `site.yaml`, `site.secret.yaml` if it turns secrets into Secrets, then its override from `values/` ([Site directory](#site-directory)). For the kubeconfig it uses `$KUBECONFIG`, else `~/.kube/config` ([Restore](#restore), step 3).
 
-To upgrade an app, bump its image in `charts/home/values.yaml` and run `scripts/apply.sh`.
+To upgrade an app, bump its image in `charts/home/values.yaml` and run `helmfile apply`. To upgrade a third-party chart, bump its `version` in `helmfile.yaml.gotmpl`.
 
 ## Exposing services
 
@@ -87,7 +91,7 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
    ```sh
    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.36.5+k3s1 sh -
    ```
-2. Install the Helm CLI (v4) and an NFS client (`apt install nfs-common`). kubelet needs the NFS client to mount the backup share.
+2. Install the Helm CLI (v4), helmfile with the helm-diff plugin ([Apply](#apply)), and an NFS client (`apt install nfs-common`). kubelet needs the NFS client to mount the backup share.
    With ufw (default deny incoming), allow the pod and service networks, which k3s needs anyway and which also covers Traefik reaching Home Assistant on the host network. Then allow HomeKit and mDNS from the LAN (`network.lanCidr`):
    ```sh
    ufw allow from 10.42.0.0/16 comment 'k3s pods'
@@ -102,8 +106,8 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
    ```
 4. Put back your site directory (clone the private repo and set `CAIRN_SITE`, or copy the files into the repo root), or run `scripts/configure.py` to write `site.yaml`. Run it as well if the site changed (new IPs, NAS, Zigbee stick...).
 5. `scripts/setup-gandi-dns01.sh`: writes `site.secret.yaml` from a Gandi PAT, installs cert-manager and `charts/cluster`, and proves issuance with a staging certificate.
-6. `scripts/setup-discord-alerts.sh`: writes the Discord webhook for alerts to `site.secret.yaml` (see [Monitoring](#monitoring)). It installs kube-prometheus-stack too; Prometheus waits for its volume until `scripts/apply.sh` installs LVM LocalPV.
-7. `scripts/apply.sh`
+6. `scripts/setup-discord-alerts.sh`: writes the Discord webhook for alerts to `site.secret.yaml` (see [Monitoring](#monitoring)). It installs kube-prometheus-stack too.
+7. `helmfile apply`
 8. Restore the home automation state from the NAS: `scripts/restore-home.sh <YYYY-MM-DD>` (see [Backups](#backups)).
 9. Restore each Postgres database: `scripts/restore-postgres.sh <namespace> <YYYY-MM-DD>` (see [Postgres](#postgres)).
 
@@ -143,9 +147,9 @@ The PAT expires. Before it does, create a new one in Gandi and run `scripts/setu
 **First install.** The first visitor to a fresh Immich becomes its admin, so it starts without an Ingress (and so without a certificate that would announce the hostname in the CT logs). Create the admin through a tunnel, then make it public:
 
 ```sh
-helm upgrade --install immich charts/immich -n immich --create-namespace -f site.yaml --set ingress=false --wait --timeout 15m
+helmfile apply -l name=immich --set ingress=false
 kubectl -n immich port-forward svc/immich-server 2283:2283     # then open http://localhost:2283
-scripts/apply.sh                                               # adds the public Ingress
+helmfile apply -l name=immich                                  # adds the public Ingress
 ```
 
 Run the port-forward on a computer whose kubectl reaches the cluster (the node's kubeconfig with `127.0.0.1` replaced by the node's LAN IP). Or run it on the node and tunnel to it, which leaves no cluster credentials on the computer: `ssh -N -L 2283:localhost:2283 <user>@<node>`.
@@ -168,11 +172,11 @@ In each of those namespaces:
   ```
 - A NetworkPolicy lets in only that namespace's pods, plus the operator and Prometheus. Apps in other namespaces can't connect even with the password. A new pod's connections are refused for its first few seconds, until k3s adds it to the policy, so apps should retry the database on startup.
 
-To add a cluster, add its namespace to `postgres.clusters` (or run `scripts/configure.py`) and run `scripts/apply.sh`. Per-cluster settings go next to the name: `size` to grow one online (`notes: {size: 20Gi}`), `image` to pin its version. Removing an entry only stops `scripts/apply.sh` from managing that cluster, and even `helm uninstall` leaves the Cluster and its data in place. Deleting it takes `kubectl -n <namespace> delete cluster postgres`, which removes the data too.
+To add a cluster, add its namespace to `postgres.clusters` (or run `scripts/configure.py`) and run `helmfile apply`. Per-cluster settings go next to the name: `size` to grow one online (`notes: {size: 20Gi}`), `image` to pin its version. Removing an entry only stops `scripts/apply.sh` from managing that cluster, and even `helm uninstall` leaves the Cluster and its data in place. Deleting it takes `kubectl -n <namespace> delete cluster postgres`, which removes the data too.
 
 **Backups.** Every night at 04:30, each database is dumped with `pg_dump` (custom format) to the NAS, as `<postgres.backupPath>/<namespace>/YYYY-MM-DD.dump`, and kept 14 days. A failed dump shows up in Discord as `KubeJobFailed`. To restore a day, stop the apps that use the database, then run `scripts/restore-postgres.sh <namespace> <YYYY-MM-DD>`. It lists the open connections, asks before changing anything, and replaces the database's contents in one transaction; if anything fails, the database stays as it was.
 
-**Upgrades.** For a new minor version, change `image` in `charts/postgres/values.yaml` and run `scripts/apply.sh`; CloudNativePG restarts each instance on it. A new major version works the same way, but CloudNativePG then stops the instance and upgrades the data in place with `pg_upgrade`, which takes a few minutes. Try it on one cluster first (`image` in its `postgres.clusters` entry, e.g. the uat one), right after a dump, and run `ANALYZE` afterwards, since `pg_upgrade` doesn't carry over the planner statistics.
+**Upgrades.** For a new minor version, change `image` in `charts/postgres/values.yaml` and run `helmfile apply`; CloudNativePG restarts each instance on it. A new major version works the same way, but CloudNativePG then stops the instance and upgrades the data in place with `pg_upgrade`, which takes a few minutes. Try it on one cluster first (`image` in its `postgres.clusters` entry, e.g. the uat one), right after a dump, and run `ANALYZE` afterwards, since `pg_upgrade` doesn't carry over the planner statistics.
 
 Grafana has CloudNativePG's dashboard, and Prometheus scrapes every instance.
 
@@ -206,7 +210,7 @@ Two StorageClasses, both on the node's disk:
 
 The `lvm` volumes can only use the volume group's unallocated space. Volumes grow online, without restarting anything:
 
-- Immich: raise `storage.<volume>.size` in `charts/immich/values.yaml` and run `scripts/apply.sh`.
+- Immich: raise `storage.<volume>.size` in `charts/immich/values.yaml` and run `helmfile apply`.
 - Prometheus, Loki: a StatefulSet doesn't resize the PVCs it already made, so patch the PVC, e.g. `kubectl -n monitoring patch pvc storage-loki-0 -p '{"spec":{"resources":{"requests":{"storage":"20Gi"}}}}'`. Then raise the size in `helm/<release>/values.yaml` too, so a rebuild gets the same. Loki's upgrade fails on that change (a StatefulSet can't change its volume template), so first delete the StatefulSet alone: `kubectl -n monitoring delete statefulset loki --cascade=orphan` (the pod keeps running), then run `helm/loki/install.sh`. Prometheus's operator recreates its StatefulSet by itself (Prometheus restarts).
 
 When the volume group runs out, it needs more space from the host: a new disk added to the group, or a smaller root logical volume. Shrinking root has to happen offline (ext4 can grow while mounted but not shrink), e.g. from a live USB: `e2fsck -f`, then `lvreduce --resizefs`. Back up first.
@@ -217,4 +221,4 @@ Kubernetes Secrets are base64, not encryption. **Plaintext secrets are never com
 
 - Secret values go in `site.secret.yaml` in the site directory; in the repo root it's gitignored (`*.secret.yaml`). `site.secret.example.yaml` lists the keys with placeholder values.
 - The setup scripts write it through `scripts/secret.py`, which changes one key and keeps the others.
-- `scripts/apply.sh` passes it to `charts/cluster` (the Gandi PAT) and `charts/monitoring` (the Discord webhook), which turn it into Secrets. Helm also keeps a copy in each release record, a Secret in the release's namespace.
+- helmfile passes it to `charts/cluster` (the Gandi PAT) and `charts/monitoring` (the Discord webhook), which turn it into Secrets. Helm also keeps a copy in each release record, a Secret in the release's namespace.

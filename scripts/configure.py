@@ -8,7 +8,7 @@ Each question offers a default: the current site.yaml value, or one detected on 
 (LAN IP and CIDR, timezone, Zigbee USB device, cni0 gateway, LVM volume group). Enter keeps it. Answers are
 validated, and the diff is shown before anything is written. Only the components turned on get their
 questions; a component turned off loses its section. Secrets are not asked here:
-scripts/setup-gandi-dns01.sh takes the Gandi PAT. Afterwards: scripts/apply.sh --dry-run.
+scripts/setup-gandi-dns01.sh takes the Gandi PAT. Afterwards: helmfile diff.
 """
 import difflib
 import glob
@@ -367,7 +367,7 @@ postgres:
     if input(f"\n寫入 {OUT}？[Y/n] ").strip().lower() in ("", "y", "yes"):
         OUT.parent.mkdir(parents=True, exist_ok=True)
         OUT.write_text(text)
-        print("已寫入。下一步：scripts/apply.sh --dry-run")
+        print("已寫入。下一步：helmfile diff")
     else:
         print("沒有寫入。")
 

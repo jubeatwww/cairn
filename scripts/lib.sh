@@ -7,7 +7,8 @@
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SITE=$(cd "${CAIRN_SITE:-$REPO}" 2> /dev/null && pwd) || { echo "CAIRN_SITE is not a directory: ${CAIRN_SITE:-}" >&2; exit 1; }
-# Absolute, for helm/*/install.sh after a cd. Pass it on through sudo, which drops the environment.
+# Absolute, for helmfile (which reads it) and after a cd. Pass it on through sudo, which drops the
+# environment.
 export CAIRN_SITE=$SITE
 
 # Sets `values` to the helm --values for a local chart's release, in order: site.yaml,
