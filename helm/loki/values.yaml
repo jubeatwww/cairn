@@ -51,5 +51,9 @@ gateway:
   enabled: false
 lokiCanary:
   enabled: false
+# Loads Loki alerting rules from ConfigMaps; alerts come from Prometheus instead.
+sidecar:
+  rules:
+    enabled: false
 test:
   enabled: false

@@ -180,7 +180,7 @@ Grafana has CloudNativePG's dashboard, and Prometheus scrapes every instance.
 
 Everything runs in namespace `monitoring`:
 
-- `helm/kube-prometheus-stack`: Prometheus (15 days, at most 18 GB, on a 20 GiB volume), Alertmanager, Grafana, node-exporter and kube-state-metrics. Scrapes of etcd, the scheduler, the controller-manager and kube-proxy are off: k3s runs them inside its own process without exposing their metrics. Prometheus picks up ServiceMonitors, PodMonitors and rules from every namespace.
+- `helm/kube-prometheus-stack`: Prometheus (15 days, at most 18 GB, on a 20 GiB volume), Alertmanager, Grafana, node-exporter and kube-state-metrics. Scrapes of etcd, the scheduler, the controller-manager and kube-proxy are off: k3s runs them inside its own process without exposing their metrics. Prometheus picks up ServiceMonitors, PodMonitors and rules from every namespace. Of the cluster's own metrics it keeps only what the chart's rules and dashboards read, about 18k series instead of 113k: k3s serves every component's metrics at both the apiserver and the kubelet endpoint, so each of those jobs keeps only its own, and Grafana's, cAdvisor's and kube-state-metrics' unused families are dropped (`metricRelabelings` in `values.yaml`). A chart upgrade can bring rules or dashboards that read a dropped metric, so check them against those lists when bumping it.
 - `helm/loki`: Loki as a single binary on a 10 GiB volume, keeping 14 days of logs. It takes at most 100 KB/s, so a pod stuck in a log loop can't fill the volume quickly.
 - `helm/alloy`: Grafana Alloy, shipping every pod's logs to Loki through the Kubernetes API.
 - `charts/monitoring`: Grafana's LAN-only Ingress at `grafana.hostname` from `site.yaml`.
