@@ -74,7 +74,8 @@ alertmanager:
 
 grafana:
   # The admin password is generated on first install and kept in the Secret
-  # kube-prometheus-stack-grafana (key admin-password).
+  # kube-prometheus-stack-grafana (key admin-password). Change it with
+  # scripts/set-grafana-password.sh, which updates Grafana and the Secret together.
   defaultDashboardsTimezone: browser
   persistence:
     enabled: true

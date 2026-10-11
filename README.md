@@ -28,7 +28,8 @@ charts/monitoring/  local chart: Grafana's LAN-only Ingress, for the monitoring 
 charts/postgres/    local chart: one Postgres cluster per namespace in site.yaml, with nightly dumps
 helm/<release>/     third-party charts: values.yaml + install.sh (cert-manager, the Gandi webhook,
                     OpenEBS LVM LocalPV, kube-prometheus-stack, Loki, Alloy, CloudNativePG)
-scripts/            helpers you run by hand: configure, apply, Gandi and Discord setup, restore
+scripts/            helpers you run by hand: configure, apply, Gandi and Discord setup, restore,
+                    Grafana's password
 ```
 
 The local charts hold templates only. Every site-specific value comes from `site.yaml`; versions (image tags) live in each chart's `values.yaml`. `scripts/configure.py` writes `site.yaml` from questions, offering the current values or ones detected on the node, so you don't have to edit it by hand.
@@ -165,6 +166,8 @@ Grafana comes with Prometheus, Alertmanager and Loki as data sources, and the us
 ```sh
 kubectl -n monitoring get secret kube-prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d
 ```
+
+Change it with `scripts/set-grafana-password.sh`, not in Grafana's UI. The sidecars that make Grafana reload dashboards and data sources log in with the Secret's copy, and the script sets both. Grafana's volume isn't backed up, so after a rebuild the password is a new generated one again; run the script to set yours.
 
 **Alerts** go to a Discord channel: every alert from kube-prometheus-stack's default rules (a volume filling up, a pod crash-looping, a node running out of memory...), grouped by namespace, again every 12 hours while it keeps firing, and once more when it resolves. Watchdog, which always fires to prove the pipeline works, is not sent. Set up or switch the channel with `scripts/setup-discord-alerts.sh`: it takes the channel's webhook URL (channel settings > Integrations > Webhooks > New Webhook > Copy Webhook URL), checks it, stores it in `site.secret.yaml`, applies it, and sends a test alert. The routing is in `helm/kube-prometheus-stack/values.yaml` (`alertmanager.config`).
 
