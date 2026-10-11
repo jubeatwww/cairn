@@ -68,6 +68,8 @@ environments:
        with its values.yaml (or the entry's values:, relative ones from the directory).
        Release <name> in namespace <name> gets site.yaml, those values files, the entry itself (its
        site settings, and any chart value to override), then its section of site.secret.yaml.
+       Each secret its app.yaml declares (secrets:) must be set there first: nothing renders until
+       scripts/secret.py fill has set it, so a chart needn't check for it itself.
        A database adds release postgres in the same namespace; volumes under backup:, or a
        database (its own, or backup.database for the cluster postgres its chart makes), add
        release backup (charts/backup) there too, unless backup: false. */}}
@@ -80,6 +82,9 @@ environments:
 {{- $spec := dict }}
 {{- if isFile (printf "%s/app.yaml" $dir) }}{{ $spec = readFile (printf "%s/app.yaml" $dir) | fromYaml }}
 {{- else if hasKey $entry "app" }}{{ fail (printf "apps.%s.app (site.yaml): there's no %s/app.yaml" $name $dir) }}{{ end }}
+{{- range $key, $_ := get "secrets" dict $spec }}
+{{- if not (get (printf "apps.%s.%s" $name $key) "" $secrets) }}{{ fail (printf "apps.%s.%s is missing (site.secret.yaml): scripts/secret.py fill %s" $name $key $name) }}{{ end }}
+{{- end }}
 {{- $spec = mergeOverwrite $spec (deepCopy $entry) }}
 {{- $needs := list "kube-system/cluster" }}
 {{- if hasKey $spec "database" }}

@@ -41,7 +41,7 @@ Working notes for agents. Read [README.md](README.md) first: "Design" says why t
 - Secret values go in `site.secret.yaml` in the site directory and are never committed here. A value may be a vals reference (`ref+sops://...`, `ref+op://...`), resolved by helmfile; charts never see the difference.
 - Templates put secret values only in `kind: Secret` objects, never in a ConfigMap, an env `value` or an annotation: `helmfile diff` masks Secrets only.
 - An app gets only its own section of `site.secret.yaml` (`apps.<name>`), never the whole file: Helm stores every release's values.
-- An app declares each secret its chart reads under `secrets` in its `app.yaml` (`generate: true` for what only it uses, `ask` for the rest), so `scripts/secret.py fill` sets them; no app gets a secrets script of its own.
+- An app declares each secret its chart reads under `secrets` in its `app.yaml` (`generate: true` for what only it uses, `ask` for the rest), so `scripts/secret.py fill` sets them and helmfile refuses to render while one is missing; no app gets a secrets script of its own.
 - Keep `site.secret.example.yaml` in sync: the real keys with placeholder values, so it's clear what to fill in.
 
 ## Validate and apply
