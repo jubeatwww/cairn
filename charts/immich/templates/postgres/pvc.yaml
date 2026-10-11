@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: immich-postgres-data
+  name: immich-postgres
   namespace: {{ .Release.Namespace }}
   annotations:
     helm.sh/resource-policy: keep

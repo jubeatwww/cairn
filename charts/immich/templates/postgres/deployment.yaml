@@ -30,6 +30,10 @@ spec:
                   key: password
             - name: POSTGRES_INITDB_ARGS
               value: --data-checksums
+            # A subdirectory of the volume: its root holds ext4's lost+found, and initdb wants an
+            # empty directory.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           ports:
             - name: postgres
               containerPort: 5432
@@ -44,7 +48,7 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: immich-postgres-data
+            claimName: immich-postgres
         # docker-compose's shm_size: 128mb
         - name: shm
           emptyDir:

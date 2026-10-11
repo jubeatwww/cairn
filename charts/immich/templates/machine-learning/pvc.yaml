@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: immich-model-cache
+  name: immich-models
   namespace: {{ .Release.Namespace }}
   annotations:
     helm.sh/resource-policy: keep

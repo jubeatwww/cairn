@@ -70,7 +70,7 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
    ufw allow from <lanCidr> to any port 21064 proto tcp comment 'HomeKit Bridge'
    ufw allow from <lanCidr> to any port 5353 proto udp comment 'mDNS'
    ```
-   Leave unallocated space in an LVM volume group (`lvm.volumeGroup`) for the size-capped volumes, at least 70 GiB plus 5 GiB per Postgres cluster with the sizes in this repo (see [Storage](#storage)). Ubuntu's installer does that by default: it gives the root logical volume only part of the disk.
+   Leave unallocated space in an LVM volume group (`lvm.volumeGroup`) for the size-capped volumes, at least 90 GiB plus 5 GiB per Postgres cluster with the sizes in this repo (see [Storage](#storage)). Ubuntu's installer does that by default: it gives the root logical volume only part of the disk.
 3. Optional: give your user the kubeconfig so the scripts don't need sudo:
    ```sh
    mkdir -p ~/.kube && sudo install -m 600 -o "$USER" -g "$USER" /etc/rancher/k3s/k3s.yaml ~/.kube/config
@@ -174,12 +174,12 @@ Helm installs kube-prometheus-stack's CRDs only on the first install. After bump
 
 Two StorageClasses, both on the node's disk:
 
-- `lvm` (`charts/cluster`, provisioned by `helm/lvm-localpv`): each volume is an LVM logical volume of exactly its requested size, in the volume group `lvm.volumeGroup` from `site.yaml`. The size is a hard cap: past it, writes fail with "no space left" and the root filesystem isn't touched. For volumes that keep growing: Prometheus (20 GiB), Loki (10 GiB), Immich's thumbnails and encoded videos (40 GiB), each Postgres cluster (5 GiB by default).
-- `local-path` (k3s's default): a directory on the root filesystem. The requested size is neither enforced nor reserved. For the small volumes: Home Assistant, Zigbee2MQTT, Grafana, Immich's Postgres and model cache.
+- `lvm` (`charts/cluster`, provisioned by `helm/lvm-localpv`): each volume is an LVM logical volume of exactly its requested size, in the volume group `lvm.volumeGroup` from `site.yaml`. The size is a hard cap: past it, writes fail with "no space left" and the root filesystem isn't touched. For volumes that keep growing: Prometheus (20 GiB), Loki (10 GiB), Immich's thumbnails and encoded videos (40 GiB), its Postgres (10 GiB) and model cache (10 GiB), each Postgres cluster (5 GiB by default).
+- `local-path` (k3s's default): a directory on the root filesystem. The requested size is neither enforced nor reserved. For the small volumes that stay small: Home Assistant, Zigbee2MQTT, Grafana. Mounting them needs nothing but the node, so the home automation starts even when the LVM driver doesn't.
 
 The `lvm` volumes can only use the volume group's unallocated space. Volumes grow online, without restarting anything:
 
-- Immich: raise `storage.data.size` in `charts/immich/values.yaml` and run `scripts/apply.sh`.
+- Immich: raise `storage.<volume>.size` in `charts/immich/values.yaml` and run `scripts/apply.sh`.
 - Prometheus, Loki: a StatefulSet doesn't resize the PVCs it already made, so patch the PVC, e.g. `kubectl -n monitoring patch pvc storage-loki-0 -p '{"spec":{"resources":{"requests":{"storage":"20Gi"}}}}'`. Then raise the size in `helm/<release>/values.yaml` too, so a rebuild gets the same. Loki's upgrade fails on that change (a StatefulSet can't change its volume template), so first delete the StatefulSet alone: `kubectl -n monitoring delete statefulset loki --cascade=orphan` (the pod keeps running), then run `helm/loki/install.sh`. Prometheus's operator recreates its StatefulSet by itself (Prometheus restarts).
 
 When the volume group runs out, it needs more space from the host: a new disk added to the group, or a smaller root logical volume. Shrinking root has to happen offline (ext4 can grow while mounted but not shrink), e.g. from a live USB: `e2fsck -f`, then `lvreduce --resizefs`. Back up first.
