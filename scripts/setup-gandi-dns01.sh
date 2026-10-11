@@ -5,7 +5,7 @@
 #
 # Prompts for a Gandi Personal Access Token, checks it can manage every domain, writes it to
 # site.secret.yaml in the site directory (scripts/lib.sh), installs cert-manager, the Gandi webhook
-# and charts/cluster, then issues a staging cert for <domain> + *.<domain> and deletes it again.
+# and release cluster, then issues a staging cert for <domain> + *.<domain> and deletes it again.
 # Idempotent. Run as your normal user (site.secret.yaml must stay yours). Uses $KUBECONFIG, else
 # ~/.kube/config, else k3s's root-only kubeconfig through sudo.
 set -euo pipefail
@@ -77,7 +77,7 @@ printf '%s' "$pat" | "$REPO/scripts/secret.py" set gandi.pat
 
 # 4. cert-manager and the webhook first (CRDs), then the chart with the ClusterIssuers and the Secret
 ((${#as[@]} == 0)) || { step "sudo 驗證"; sudo -v; }
-step "安裝 cert-manager、cert-manager-webhook-gandi、charts/cluster（ClusterIssuer、Gandi Secret）"
+step "安裝 cert-manager、cert-manager-webhook-gandi、release cluster（ClusterIssuer、Gandi Secret）"
 "${as[@]}" "$(command -v helmfile)" -f "$REPO/helmfile.yaml.gotmpl" sync \
   -l name=cert-manager -l name=cert-manager-webhook-gandi -l name=cluster > /dev/null
 

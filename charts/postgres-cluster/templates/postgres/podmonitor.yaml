@@ -1,0 +1,16 @@
+{{- if (.Values.infrastructure | default dict).monitoring }}
+# Prometheus scrapes the instance's exporter (infrastructure/monitoring picks up PodMonitors from
+# every namespace, and brings their CRD). Grafana has CloudNativePG's dashboard (infrastructure/postgres).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: postgres
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: postgres
+      cnpg.io/podRole: instance
+  podMetricsEndpoints:
+    - port: metrics
+{{- end }}

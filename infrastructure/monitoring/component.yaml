@@ -1,0 +1,40 @@
+# site.yaml: infrastructure.monitoring. Fields: infrastructure/base/component.yaml.
+description: Prometheus, Alertmanager, Grafana, Loki and Alloy; alerts go to Discord (site.secret.yaml discord.webhookUrl)
+repositories:
+  prometheus-community: https://prometheus-community.github.io/helm-charts
+  grafana: https://grafana.github.io/helm-charts
+releases:
+  # Brings the ServiceMonitor and PodMonitor CRDs.
+  - name: kube-prometheus-stack
+    namespace: monitoring
+    chart: prometheus-community/kube-prometheus-stack
+    version: 91.9.0
+    timeout: 600
+    needs: [kube-system/cluster]
+  - name: loki
+    namespace: monitoring
+    chart: grafana/loki
+    version: 7.3.0
+    timeout: 600
+    needs: [monitoring/kube-prometheus-stack]
+  - name: alloy
+    namespace: monitoring
+    chart: grafana/alloy
+    version: 1.13.0
+    needs: [monitoring/loki]
+  # Grafana's Ingress and the Discord webhook's Secret.
+  - name: monitoring
+    namespace: monitoring
+    chart: ./chart
+    site: secrets
+    needs: [monitoring/kube-prometheus-stack]
+
+# Site settings this component reads, asked by scripts/configure.py while it's on:
+#   key (dotted path in site.yaml): comment, ask (the question), example (site.example.yaml),
+#   check (a validator in configure.py), default, detect (a detector in configure.py)
+site:
+  grafana.hostname:
+    comment: "LAN only: its DNS record points at network.nodeIp."
+    ask: Grafana 的主機名稱（只限內網）
+    example: grafana.example.com
+    check: hostname

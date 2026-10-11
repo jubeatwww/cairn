@@ -1,0 +1,148 @@
+# https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
+# Prometheus, Alertmanager, Grafana, node-exporter and kube-state-metrics.
+# Grafana's Ingress lives in chart/ (release monitoring), with the hostname from site.yaml.
+
+# k3s runs etcd, the scheduler, the controller-manager and kube-proxy inside the k3s process and
+# doesn't expose their metrics. Scraping them would only raise "target down" alerts.
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+defaultRules:
+  rules:
+    etcd: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    kubeControllerManager: false
+    kubeProxy: false
+    windows: false
+
+# Scrape only what the chart's rules and dashboards read (checked against 91.9.0): about 18k series
+# instead of 113k. After bumping the chart, check its rules and dashboards for metrics these lists
+# drop. k3s serves every component's metrics (apiserver, etcd, scheduler, kubelet...) from one
+# shared registry, at both the apiserver and the kubelet endpoint, so each of those two jobs keeps
+# only its own.
+kubeApiServer:
+  serviceMonitor:
+    metricRelabelings:
+      # The chart's default: the latency histograms' rarely used buckets.
+      - sourceLabels: [__name__, le]
+        action: drop
+        regex: (etcd_request|apiserver_request_slo|apiserver_request_sli|apiserver_request)_duration_seconds_bucket;(0\.15|0\.2|0\.3|0\.35|0\.4|0\.45|0\.6|0\.7|0\.8|0\.9|1\.25|1\.5|1\.75|2|3|3\.5|4|4\.5|6|7|8|9|15|20|40|45|50)(\.0)?
+      - sourceLabels: [__name__]
+        action: keep
+        regex: apiserver_request_total|apiserver_request_sli_duration_seconds_(bucket|count)|apiserver_request_terminations_total|apiserver_client_certificate_expiration_seconds_(bucket|count)|aggregator_unavailable_apiservice(_total)?|workqueue_(adds_total|depth|queue_duration_seconds_bucket)|rest_client_requests_total|kubernetes_build_info|process_.+|go_goroutines
+kubelet:
+  serviceMonitor:
+    # Per-container probe results: nothing reads them.
+    probes: false
+    metricRelabelings:
+      # The chart's default.
+      - sourceLabels: [__name__, le]
+        action: drop
+        regex: (csi_operations|storage_operation_duration)_seconds_bucket;(0.25|2.5|15|25|120|600)(\.0)?
+      - sourceLabels: [__name__]
+        action: keep
+        regex: kubelet_.+|volume_manager_total_volumes|storage_operation_.+|rest_client_requests_total|rest_client_request_duration_seconds_bucket|process_.+|go_goroutines
+    cAdvisorMetricRelabelings:
+      # The chart's defaults.
+      - {sourceLabels: [__name__], action: drop, regex: container_cpu_(cfs_throttled_seconds_total|load_average_10s|system_seconds_total|user_seconds_total)}
+      - {sourceLabels: [__name__], action: drop, regex: container_fs_(io_current|io_time_seconds_total|io_time_weighted_seconds_total|reads_merged_total|sector_reads_total|sector_writes_total|writes_merged_total)}
+      - {sourceLabels: [__name__], action: drop, regex: container_memory_(mapped_file|swap)}
+      - {sourceLabels: [__name__], action: drop, regex: container_(file_descriptors|tasks_state|threads_max)}
+      - {sourceLabels: [__name__, scope], action: drop, regex: container_memory_failures_total;hierarchy}
+      - {sourceLabels: [__name__, interface], action: drop, regex: container_network_.*;(cali|cilium|cni|lxc|nodelocaldns|tunl).*}
+      - {sourceLabels: [__name__], action: drop, regex: container_spec.*}
+      - {sourceLabels: [id, pod], action: drop, regex: .+;}
+      - sourceLabels: [__name__]
+        action: drop
+        regex: container_(blkio_.+|pressure_.+|memory_(failures_total|failcnt|usage_bytes|max_usage_bytes|kernel_usage|total_.+)|threads|sockets|processes|start_time_seconds|last_seen|health_state|oom_events_total|ulimits_soft|cpu_load_d_average_10s)
+kube-state-metrics:
+  prometheus:
+    monitor:
+      http:
+        metricRelabelings:
+          # Objects no rule or dashboard looks at.
+          - sourceLabels: [__name__]
+            action: drop
+            regex: kube_(secret|configmap|endpointslice|endpoint|service|lease|certificatesigningrequest|mutatingwebhookconfiguration|validatingwebhookconfiguration|networkpolicy|ingress|ingressclass|storageclass)_.+|kube_pod_(tolerations|status_qos_class|ips)
+
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    # Stop well before the volume fills up: past its size, writes fail.
+    retentionSize: 18GB
+    # Pick up ServiceMonitors, PodMonitors, Probes, ScrapeConfigs and rules from every namespace,
+    # not only the ones labelled for this release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          # Capped at its size (infrastructure/base/chart, lvmStorageClass). A StatefulSet can't change its
+          # volumes in place: changing the class means deleting the StatefulSet and the PVC.
+          storageClassName: lvm
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 20Gi
+
+alertmanager:
+  # Merged into the chart's default config, which keeps its grouping (by namespace), its
+  # inhibit rules, and repeating a firing alert every 12h.
+  config:
+    route:
+      receiver: discord
+      routes:
+        # Always firing, to prove the alerting pipeline works. Nothing to tell anyone.
+        - receiver: "null"
+          matchers:
+            - alertname = "Watchdog"
+    receivers:
+      - name: "null"
+      - name: discord
+        discord_configs:
+          # The Secret from chart/ (discordSecret), mounted through alertmanagerSpec.secrets.
+          - webhook_url_file: /etc/alertmanager/secrets/alertmanager-discord/webhook-url
+            # Shorter than the default, which lists every label of every alert.
+            title: '[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ len .Alerts.Firing }}{{ end }}] {{ .CommonLabels.alertname }}{{ with .GroupLabels.namespace }} · {{ . }}{{ end }}'
+            message: |-
+              {{ range .Alerts }}{{ if eq .Status "firing" }}🔴{{ else }}🟢{{ end }} **{{ .Labels.alertname }}**{{ with .Labels.severity }} ({{ . }}){{ end }}
+              {{ with .Annotations.description }}{{ . }}{{ else }}{{ .Annotations.summary }}{{ end }}
+              {{ end }}
+  alertmanagerSpec:
+    secrets:
+      - alertmanager-discord
+
+grafana:
+  # The admin password is generated on first install and kept in the Secret
+  # kube-prometheus-stack-grafana (key admin-password). Change it with
+  # scripts/set-grafana-password.sh, which updates Grafana and the Secret together.
+  defaultDashboardsTimezone: browser
+  serviceMonitor:
+    metricRelabelings:
+      # What the chart's Grafana dashboard shows; Grafana exports thousands of series about its internals.
+      - sourceLabels: [__name__]
+        action: keep
+        regex: grafana_build_info|grafana_http_request_duration_seconds_.+|grafana_stat_totals_.+|grafana_alerting_result_total|process_.+|go_goroutines
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    size: 2Gi
+    annotations:
+      helm.sh/resource-policy: keep
+  additionalDataSources:
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      # loki.yaml: single binary, no gateway.
+      url: http://loki.monitoring.svc.cluster.local:3100

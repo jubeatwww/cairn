@@ -4,7 +4,7 @@
 #   scripts/setup-discord-alerts.sh
 #
 # Prompts for a Discord webhook URL, checks it with Discord, writes it to site.secret.yaml in the
-# site directory (scripts/lib.sh), installs charts/monitoring (the Secret) and kube-prometheus-stack
+# site directory (scripts/lib.sh), installs release monitoring (the Secret) and kube-prometheus-stack
 # (Alertmanager's config), then sends a test alert to the channel.
 # Idempotent. Run as your normal user (site.secret.yaml must stay yours). Uses $KUBECONFIG, else
 # ~/.kube/config, else k3s's root-only kubeconfig through sudo.
@@ -56,7 +56,7 @@ printf '%s' "$url" | "$REPO/scripts/secret.py" set discord.webhookUrl
 
 # 4. The Secret first: Alertmanager's pod mounts it.
 ((${#as[@]} == 0)) || { step "sudo 驗證"; sudo -v; }
-step "安裝 charts/monitoring（webhook 的 Secret）"
+step "安裝 release monitoring（webhook 的 Secret）"
 "${as[@]}" "$(command -v helmfile)" -f "$REPO/helmfile.yaml.gotmpl" sync -l name=monitoring,namespace=monitoring > /dev/null
 step "安裝 kube-prometheus-stack（Alertmanager 設定）"
 "${as[@]}" "$(command -v helmfile)" -f "$REPO/helmfile.yaml.gotmpl" sync -l name=kube-prometheus-stack > /dev/null

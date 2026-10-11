@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Restore Zigbee2MQTT and Home Assistant state from a nightly backup on the NAS (charts/home, backup).
+# Restore Zigbee2MQTT and Home Assistant state from a nightly backup on the NAS (apps/home, backup).
 #
 #   scripts/restore-home.sh <YYYY-MM-DD>
 #
 # Stops both apps, unpacks that day's archives over their volumes, and starts them again
 # (a couple of minutes of downtime). Files the backup doesn't contain, such as HA's history
 # database, are left as they are. The NAS location comes from site.yaml (scripts/lib.sh). Needs the
-# PVCs to exist, so run scripts/apply.sh first on a fresh cluster.
+# PVCs to exist, so run helmfile apply first on a fresh cluster.
 # Uses $KUBECONFIG, else ~/.kube/config, else k3s's root-only kubeconfig (run with sudo).
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -23,8 +23,7 @@ k() { kubectl -n home "$@"; }
 [[ -f $SITE/site.yaml ]] || { echo "$SITE/site.yaml is missing: run scripts/configure.py (shape: site.example.yaml)" >&2; exit 1; }
 
 job=restore-$(date +%s)
-site_values home
-manifest=$(helm template home charts/home --namespace home "${values[@]}" \
+manifest=$(helmfile -q -f helmfile.yaml.gotmpl template --skip-deps -l name=home,namespace=home \
   --set restore.date="$day" --set restore.job="$job" --show-only templates/backup/restore-job.yaml)
 
 echo "==> Stopping home-assistant and zigbee2mqtt"

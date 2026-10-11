@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """Write site.yaml, the per-site settings the charts are rendered with, by answering questions.
 
-    scripts/configure.py [output]      default output: site.yaml in the site directory, $CAIRN_SITE
-                                       or else the repo root (scripts/lib.sh); created if missing
+    scripts/configure.py [output]             default output: site.yaml in the site directory,
+                                              $CAIRN_SITE or else the repo root (scripts/lib.sh)
+    scripts/configure.py --example [output]   site.example.yaml in the repo, from the examples
 
-Each question offers a default: the current site.yaml value, or one detected on this node
-(LAN IP and CIDR, timezone, Zigbee USB device, cni0 gateway, LVM volume group). Enter keeps it. Answers are
-validated, and the diff is shown before anything is written. Only the components turned on get their
-questions; a component turned off loses its section. Secrets are not asked here:
+The shared settings (certificates, timezone, network, NAS, LVM) are asked here. Everything else is
+declared where it's used: each component's infrastructure/<name>/component.yaml and each app's
+apps/<name>/app.yaml list their site settings (site:), so adding one needs no change here. Only what
+is turned on gets its questions; what is turned off loses its section. Entries in apps that no
+apps/<name>/ describes (a database only, a chart from elsewhere) are kept as they are.
+
+Each question offers a default: the current site.yaml value, or one detected on this node (LAN IP
+and CIDR, timezone, Zigbee USB device, cni0 gateway, LVM volume group). Enter keeps it. Answers are
+validated, and the diff is shown before anything is written. Secrets are not asked here:
 scripts/setup-gandi-dns01.sh takes the Gandi PAT. Afterwards: helmfile diff.
 """
 import difflib
@@ -18,14 +24,17 @@ import pathlib
 import re
 import subprocess
 import sys
+import textwrap
 
 import yaml
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 SITE = pathlib.Path(os.environ.get("CAIRN_SITE") or REPO).resolve()
-OUT = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else SITE / "site.yaml"
 ADAPTERS = ("zstack", "ember", "deconz", "zigate", "zboss", "ezsp")
+SOLVERS = ("gandi", "http01")  # names from infrastructure/base/chart/values.yaml, solvers
 K3S_NETS = ipaddress.ip_network("10.42.0.0/15")  # k3s pod and service networks
+# Keys of an apps entry that helmfile.yaml.gotmpl reads itself, not settings to ask about.
+APP_FIELDS = ("app", "chart", "version", "values", "timeout", "needs", "database")
 
 
 def sh(*cmd):
@@ -79,8 +88,23 @@ def posix_tz(tz):
     return footer if re.fullmatch(r"[A-Za-z<>+\-0-9,./:]+", footer) else None
 
 
+def detect_serial_device():
+    """The USB serial device, if there's exactly one. Lists them all for the question."""
+    devices = sorted(glob.glob("/dev/serial/by-id/*"))
+    print("  這台機器上的 USB 序列裝置：" + ("\n    " + "\n    ".join(devices) if devices else "（沒有）"))
+    return devices[0] if len(devices) == 1 else None
+
+
+# Detectors a declaration names in detect:, each returning a default or None.
+DETECTS = {"serialDevice": detect_serial_device}
+
+
 def valid_domain(v):
     return None if re.fullmatch(r"([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}", v) else "不是合法的網域"
+
+
+def valid_hostname(v):
+    return None if valid_domain(v) is None and v.count(".") >= 2 else "要是完整的主機名稱，例如 ha.example.com"
 
 
 def valid_email(v):
@@ -121,6 +145,26 @@ def valid_vg(v):
     return None if re.fullmatch(r"[A-Za-z0-9+_.][A-Za-z0-9+_.-]*", v) else "不是合法的 volume group 名稱"
 
 
+def valid_zones(v):
+    zones = [z.strip() for z in v.split(",") if z.strip()]
+    bad = [z for z in zones if valid_domain(z)]
+    return f"不是合法的網域：{', '.join(bad)}" if bad else None
+
+
+def valid_solver(v):
+    return None if v in SOLVERS else "可用的值：" + "、".join(SOLVERS)
+
+
+# Validators a declaration names in check:, each returning an error message or None.
+CHECKS = {
+    "hostname": valid_hostname,
+    "absPath": valid_abs_path,
+    "ip": valid_ip,
+    "cidr": valid_cidr,
+    "email": valid_email,
+    "zigbeeAdapter": valid_adapter,
+}
+
 
 def ask(label, default, validate=None):
     while True:
@@ -129,10 +173,7 @@ def ask(label, default, validate=None):
         except EOFError:
             v = default or ""
             print()
-        if not v:
-            print("  必填")
-            continue
-        err = validate(v) if validate else None
+        err = "必填" if not v else validate(v) if validate else None
         if err:
             print(f"  {err}")
             if not sys.stdin.isatty():
@@ -157,216 +198,262 @@ def ask_yes(label, default):
             sys.exit(1)
 
 
-SOLVERS = ("gandi", "http01")  # names from charts/cluster/values.yaml, solvers
-# What scripts/apply.sh installs besides cert-manager, LVM LocalPV and charts/cluster (site.yaml: components).
-COMPONENTS = {
-    "home": "home（Mosquitto、Zigbee2MQTT、Home Assistant）",
-    "immich": "immich（Immich，公開）",
-    "monitoring": "monitoring（Prometheus、Grafana、Loki，告警送 Discord）",
-    "postgres": "postgres（CloudNativePG，每個 namespace 一個 Postgres）",
-}
+def lookup(d, dotted):
+    for k in dotted.split("."):
+        d = d.get(k) if isinstance(d, dict) else None
+    return d
 
 
-def valid_hostname(v):
-    return None if valid_domain(v) is None and v.count(".") >= 2 else "要是完整的主機名稱，例如 ha.example.com"
+def definitions(kind, spec_file):
+    """{name: spec} for each infrastructure/<name>/component.yaml or apps/<name>/app.yaml."""
+    found = {}
+    for path in sorted((REPO / kind).glob(f"*/{spec_file}")):
+        found[path.parent.name] = yaml.safe_load(path.read_text()) or {}
+    return found
 
 
-def valid_zones(v):
-    zones = [z.strip() for z in v.split(",") if z.strip()]
-    bad = [z for z in zones if valid_domain(z)]
-    return f"不是合法的網域：{', '.join(bad)}" if bad else None
+def migrate(cur):
+    """Read a site.yaml from before infrastructure: and apps: (components:, homeAssistant:,
+    zigbee:, immich:, postgres.clusters) as the current shape, to offer its values as defaults."""
+    comp = cur.get("components")
+    if not isinstance(comp, dict):
+        return cur
+    cur = dict(cur)
+    cur.pop("components")
+    cur.setdefault("infrastructure", {n: comp[n] for n in ("monitoring", "postgres") if n in comp})
+    apps = cur.setdefault("apps", {})
+    if comp.get("home"):
+        apps["home"] = {"hostname": lookup(cur, "homeAssistant.hostname"), "zigbee": cur.get("zigbee") or {}}
+    if comp.get("immich"):
+        apps["immich"] = {k: lookup(cur, f"immich.{k}") for k in ("hostname", "libraryPath")}
+    for ns, settings in (lookup(cur, "postgres.clusters") or {}).items():
+        apps[ns] = {"database": settings or {}}
+    for key in ("homeAssistant", "zigbee", "immich"):
+        cur.pop(key, None)
+    if isinstance(cur.get("postgres"), dict):
+        cur["postgres"] = {k: v for k, v in cur["postgres"].items() if k != "clusters"}
+    return cur
 
 
-def valid_solver(v):
-    return None if v in SOLVERS else "可用的值：" + "、".join(SOLVERS)
+def q(v):
+    return yaml.safe_dump(v, default_flow_style=True, allow_unicode=True, width=1000).strip().removesuffix("\n...")
 
 
-def valid_namespaces(v):
-    names = [n.strip() for n in v.split(",") if n.strip()]
-    bad = [n for n in names if not re.fullmatch(r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?", n)]
-    return f"不是合法的 namespace 名稱（小寫英數字和 -）：{', '.join(bad)}" if bad else None
+def emit(node, depth=0):
+    """YAML lines for a tree whose leaves are (comment, value); a dict value becomes a block."""
+    out = []
+    for key, v in node.items():
+        pad = "  " * depth
+        if isinstance(v, dict):
+            out.append(f"{pad}{key}:")
+            out += emit(v, depth + 1)
+            continue
+        comment, value = v
+        if comment:
+            out += [f"{pad}# {line}" for line in textwrap.wrap(comment, 100 - len(pad) - 2)]
+        if isinstance(value, dict) and value:
+            out.append(f"{pad}{key}:")
+            out += [f"{pad}  {q(k)}: {q(x)}" for k, x in value.items()]
+        else:
+            out.append(f"{pad}{key}: {q(value)}")
+    return out
+
+
+def tree(entries):
+    """A tree for emit() from [(dotted key, comment, value)]."""
+    root = {}
+    for key, comment, value in entries:
+        *parents, leaf = key.split(".")
+        node = root
+        for p in parents:
+            node = node.setdefault(p, {})
+        node[leaf] = (comment, value)
+    return root
+
+
+def ask_declared(site, prefix, cur, example):
+    """Ask each declared setting; [(key, comment, value)] with keys relative to prefix."""
+    entries = []
+    for key, d in (site or {}).items():
+        if example:
+            value = d["example"]
+        else:
+            default = lookup(cur, f"{prefix}{key}") or d.get("default")
+            if default is None and d.get("detect"):
+                default = DETECTS[d["detect"]]()
+            value = ask(d["ask"], default, CHECKS.get(d.get("check")))
+        entries.append((key, d.get("comment"), value))
+    return entries
 
 
 def main():
-    cur = yaml.safe_load(OUT.read_text()) if OUT.exists() else {}
+    args = sys.argv[1:]
+    example = args[:1] == ["--example"]
+    if example:
+        args = args[1:]
+    out = pathlib.Path(args[0]) if args else REPO / "site.example.yaml" if example else SITE / "site.yaml"
+    components = {n: s for n, s in definitions("infrastructure", "component.yaml").items() if n != "base"}
+    app_defs = definitions("apps", "app.yaml")
 
-    def get(*keys):
-        d = cur
-        for k in keys:
-            d = d.get(k) if isinstance(d, dict) else None
-        return d
+    if example:
+        cur = {"apps": {"shop": {"database": {}}, "shop-staging": {"database": {}}, "notes": {"database": {"size": "2Gi"}}}}
+    else:
+        cur = migrate(yaml.safe_load(out.read_text()) or {}) if out.exists() else {}
+        print(f"設定 {out}：直接按 Enter 採用 [ ] 裡的值。\n")
+    get = lambda key: lookup(cur, key)  # noqa: E731
+    cur_apps = cur.get("apps") or {}
 
-    # Defaults from the older layout (a single `domain`, and <host>.<domain> hostnames).
-    old_domain = get("domain")
-    zones = get("acme", "zones") or ({old_domain: "gandi"} if old_domain else {})
-    old_host = lambda app, default: f"{get(app, 'host') or default}.{old_domain}" if old_domain else None  # noqa: E731
+    if not example:
+        print("要裝的元件（cert-manager、LVM LocalPV 和 infrastructure/base/chart 一定會裝）：")
+    infra = {n: example or ask_yes(f"  {n}（{s.get('description', '')}）", get(f"infrastructure.{n}") is not False)
+             for n, s in components.items()}
+    if not example:
+        print("\n要裝的 app（apps/）：")
+    on_apps = [n for n, s in app_defs.items()
+               if example or ask_yes(f"  {n}（{s.get('description', '')}）", n in cur_apps or not cur)]
 
-    ip, lan = detect_lan()
+    # Shared settings.
+    zones = get("acme.zones") or {}
+    if example:
+        email, gandi_zones, default_solver = "you@example.com", ["example.com"], "http01"
+        tz, tz_posix = "Etc/UTC", "UTC0"
+        node_ip, lan_cidr, pod_cidr, pod_gw = "192.168.0.10", "192.168.0.0/24", "10.42.0.0/16", "10.42.0.1"
+        nas, nas_path, vg = "192.168.0.20", "/volume1/backup", "ubuntu-vg"
+    else:
+        email = ask("\nLet's Encrypt 帳號 email", get("acmeEmail"), valid_email)
+        print("憑證的驗證方式：gandi = DNS-01（Gandi API，可簽 wildcard）；http01 = HTTP-01（主機名稱要已經指到這台 node）")
+        gandi = ask("用 gandi 驗證的 DNS zone（逗號分隔）", ", ".join(z for z, v in zones.items() if v == "gandi"), valid_zones)
+        gandi_zones = [z.strip() for z in gandi.split(",") if z.strip()]
+        default_solver = ask("其他 zone 的驗證方式", get("acme.defaultSolver") or "http01", valid_solver)
+        tz = ask("時區", get("timezone") or detect_timezone(), valid_tz)
+        tz_posix = ask("同一時區的 POSIX 格式", posix_tz(tz) or get("timezonePosix"), valid_posix_tz)
 
-    print(f"設定 {OUT}：直接按 Enter 採用 [ ] 裡的值。\n")
-    print("要裝的元件（cert-manager、LVM LocalPV 和 charts/cluster 一定會裝）：")
-    on = {n: ask_yes(f"  {label}", get("components", n) is not False) for n, label in COMPONENTS.items()}
+        ip, lan = detect_lan()
+        print(f"\n偵測到的內網：node {ip or '?'}，網段 {lan or '?'}")
+        node_ip = ask("node 的內網 IP", get("network.nodeIp") or ip, valid_ip)
+        lan_cidr = ask("允許連 LAN-only 服務的網段", get("network.lanCidr") or lan, valid_cidr)
+        if ipaddress.ip_address(node_ip) not in ipaddress.ip_network(lan_cidr):
+            print(f"  注意：{node_ip} 不在 {lan_cidr} 裡")
+        pod_cidr = ask("k3s pod 網段", get("network.podCidr") or "10.42.0.0/16", valid_cidr)
+        pod_gw = ask("cni0 在 pod 網段上的位址", detect_pod_gateway() or get("network.podGateway"), valid_ip)
 
-    email = ask("\nLet's Encrypt 帳號 email", get("acmeEmail"), valid_email)
-    print("憑證的驗證方式：gandi = DNS-01（Gandi API，可簽 wildcard）；http01 = HTTP-01（主機名稱要已經指到這台 node）")
-    gandi = ask("用 gandi 驗證的 DNS zone（逗號分隔）", ", ".join(z for z, v in zones.items() if v == "gandi"), valid_zones)
-    default_solver = ask("其他 zone 的驗證方式", get("acme", "defaultSolver") or "http01", valid_solver)
-    gandi_zones = [z.strip() for z in gandi.split(",") if z.strip()]
-    tz = ask("時區", get("timezone") or detect_timezone(), valid_tz)
-    tz_posix = ask("同一時區的 POSIX 格式", posix_tz(tz) or get("timezonePosix"), valid_posix_tz)
-
-    print(f"\n偵測到的內網：node {ip or '?'}，網段 {lan or '?'}")
-    node_ip = ask("node 的內網 IP", get("network", "nodeIp") or ip, valid_ip)
-    lan_cidr = ask("允許連 LAN-only 服務的網段", get("network", "lanCidr") or lan, valid_cidr)
-    if ipaddress.ip_address(node_ip) not in ipaddress.ip_network(lan_cidr):
-        print(f"  注意：{node_ip} 不在 {lan_cidr} 裡")
-    pod_cidr = ask("k3s pod 網段", get("network", "podCidr") or "10.42.0.0/16", valid_cidr)
-    pod_gw = ask("cni0 在 pod 網段上的位址", detect_pod_gateway() or get("network", "podGateway"), valid_ip)
-
-    if on["home"] or on["immich"] or on["postgres"]:
-        nas = ask("\nNAS（NFS）的 IP", get("nas", "server"), valid_ip)
+        nas = ask("\nNAS（NFS）的 IP", get("nas.server"), valid_ip)
         exports = sh("showmount", "-e", nas).strip()
         if exports:
             print("  NAS 上的 export：\n    " + "\n    ".join(exports.splitlines()[1:]))
-    if on["home"]:
-        nas_path = ask("home 每日備份的 NFS export 路徑", get("nas", "path"), valid_abs_path)
+        nas_path = ask("home 每日備份的 NFS export 路徑", get("nas.path"), valid_abs_path) if "home" in on_apps else None
 
-        devices = sorted(glob.glob("/dev/serial/by-id/*"))
-        print("\n這台機器上的 USB 序列裝置：" + ("\n  " + "\n  ".join(devices) if devices else "（沒有）"))
-        device = ask("Zigbee 協調器", get("zigbee", "device") or (devices[0] if len(devices) == 1 else None), valid_abs_path)
-        if not pathlib.Path(device).exists():
-            print(f"  注意：{device} 目前不存在（還沒插上？）")
-        adapter = ask("Zigbee adapter 類型", get("zigbee", "adapter") or "zstack", valid_adapter)
+        vgs = detect_volume_groups()
+        print("\n這台機器上的 LVM volume group：" + ("、".join(vgs) if vgs else "（沒有）"))
+        vg = ask("給限制大小的 volume 用的 volume group（StorageClass lvm）",
+                 get("lvm.volumeGroup") or (vgs[0] if len(vgs) == 1 else None), valid_vg)
 
-    vgs = detect_volume_groups()
-    print("\n這台機器上的 LVM volume group：" + ("、".join(vgs) if vgs else "（沒有）"))
-    vg = ask("給限制大小的 volume 用的 volume group（StorageClass lvm）", get("lvm", "volumeGroup") or (vgs[0] if len(vgs) == 1 else None), valid_vg)
+    # Each component's and app's own settings.
+    component_entries = []
+    for n, s in components.items():
+        if infra[n] and s.get("site"):
+            if not example:
+                print(f"\n{n}：")
+            component_entries += ask_declared(s["site"], "", cur, example)
 
-    ha_host = immich_host = None
-    if on["home"]:
-        ha_host = ask("\nHome Assistant 的主機名稱（只限內網）", get("homeAssistant", "hostname") or old_host("homeAssistant", "ha"), valid_hostname)
-    if on["immich"]:
-        immich_host = ask("\nImmich 的主機名稱（公開）", get("immich", "hostname") or old_host("immich", "immich"), valid_hostname)
-        library = ask(f"照片庫在 NAS（{nas}）上的 export 路徑", get("immich", "libraryPath"), valid_abs_path)
-    if on["monitoring"]:
-        sibling = ha_host or immich_host
-        grafana_host = ask("\nGrafana 的主機名稱（只限內網）", get("grafana", "hostname") or (sibling and "grafana." + sibling.split(".", 1)[1]), valid_hostname)
+    app_blocks = {}
+    names = on_apps + [n for n in cur_apps if n not in on_apps and n not in app_defs]
+    for name in names:
+        entry = cur_apps.get(name) or {}
+        definition = entry.get("app", name)
+        entries = []
+        if definition in app_defs:
+            if not example:
+                print(f"\napps.{name}（apps/{definition}）：")
+            declared = app_defs[definition].get("site") or {}
+            entries = ask_declared(declared, f"apps.{name}.", cur, example)
+            top = {k.split(".")[0] for k in declared}
+            entries += [(k, None, v) for k, v in entry.items() if k not in top]
+        else:
+            entries = [(k, None, v) for k, v in entry.items()]
+        app_blocks[name] = (definition, entries)
 
-    if on["postgres"]:
-        pg_clusters = get("postgres", "clusters") or {}
-        print("\nPostgres：每個叢集放在同名的 namespace。個別設定（例如 size）在 site.yaml 裡改，這裡會保留。")
-        pg_names = ask("Postgres 叢集（逗號分隔）", ", ".join(pg_clusters), valid_namespaces)
-        pg_names = [n.strip() for n in pg_names.split(",") if n.strip()]
-        pg_backup = ask(f"Postgres 每日備份在 NAS（{nas}）上的 export 路徑", get("postgres", "backupPath"), valid_abs_path)
-
-    q = lambda v: yaml.safe_dump(v, default_flow_style=True).strip().removesuffix("\n...")  # noqa: E731
-    zone_lines = "".join(f"    {q(z)}: gandi\n" for z in gandi_zones) or "    {}\n"
-    blocks = [f"""\
-# Site-specific settings for this cluster: the "profile" the charts in charts/ are rendered with.
+    # The file.
+    if example:
+        header = """\
+# Example site.yaml: copy it to site.yaml in the site directory ($CAIRN_SITE, else the repo root,
+# where it's gitignored) and fill in, or run scripts/configure.py, which also writes this file
+# (--example) from the examples in infrastructure/*/component.yaml and apps/*/app.yaml.
+# Placeholder values only. The real ones describe a home network and stay out of the public repo.
+"""
+    else:
+        header = """\
+# Site-specific settings for this cluster: the "profile" helmfile.yaml.gotmpl renders the charts with.
 # Moving to another machine, network or domain means editing this file, not the templates.
 # It describes the home network, so it stays out of the public repo: gitignored there, or kept in
 # a private site directory ($CAIRN_SITE, see scripts/lib.sh). Keep a copy somewhere safe.
 # scripts/configure.py rewrites it from questions; site.example.yaml shows the shape.
 # Secrets go in site.secret.yaml next to it (template: site.secret.example.yaml).
-""", f"""\
-# What scripts/apply.sh installs besides cert-manager, LVM LocalPV and charts/cluster. Turning one
-# off only stops managing it: helm uninstall removes it, and keeps its volumes.
-components:
-  # charts/home: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup.
-  home: {q(on["home"])}
-  # charts/immich: Immich, public.
-  immich: {q(on["immich"])}
-  # kube-prometheus-stack, Loki and Alloy (helm/), charts/monitoring. Alerts go to Discord
-  # (site.secret.yaml: discord.webhookUrl).
-  monitoring: {q(on["monitoring"])}
-  # CloudNativePG (helm/), and charts/postgres for each of postgres.clusters.
-  postgres: {q(on["postgres"])}
-""", f"""\
-# Let's Encrypt account email.
-acmeEmail: {q(email)}
-# How cert-manager proves control of each DNS zone, by solver name (charts/cluster/values.yaml):
-#   gandi   DNS-01 through the Gandi LiveDNS API (site.secret.yaml: gandi.pat). Allows wildcards.
-#   http01  HTTP-01 through Traefik on port 80. The hostname must already resolve to this node.
-acme:
-  zones:
-{zone_lines}  # Every zone not listed above.
-  defaultSolver: {q(default_solver)}
-timezone: {q(tz)}
-# The same zone in POSIX form, for images without tzdata (the backup job).
-timezonePosix: {q(tz_posix)}
-""", f"""\
-network:
-  # Clients allowed through the lan-only middleware.
-  lanCidr: {q(lan_cidr)}
-  # The k3s node's LAN IP. Home Assistant runs on the host network, so its traffic comes from here.
-  nodeIp: {q(node_ip)}
-  # k3s defaults: the pod network, and cni0's address on it.
-  podCidr: {q(pod_cidr)}
-  podGateway: {q(pod_gw)}
-"""]
-    if on["home"] or on["immich"] or on["postgres"]:
-        blocks.append(f"""\
-nas:
-  # NFS server for the exports in this file. Each must allow the node's IP.
-  server: {q(nas)}
-""" + (f"""\
-  # Export for charts/home's nightly backups.
-  path: {q(nas_path)}
-""" if on["home"] else ""))
-    if on["home"]:
-        blocks.append(f"""\
-zigbee:
-  # Coordinator on the node. by-id names follow the USB chip, not the port it's plugged into.
-  device: {q(device)}
-  # zstack for TI chips (CC2652, CC2530). Other chips: see Zigbee2MQTT's adapter docs.
-  adapter: {q(adapter)}
-""")
-    blocks.append(f"""\
-lvm:
-  # LVM volume group on the node for the size-capped volumes (StorageClass lvm). Its unallocated
-  # space is all they can use. Ubuntu's installer names it ubuntu-vg.
-  volumeGroup: {q(vg)}
-""")
-    if on["home"]:
-        blocks.append(f"""\
-homeAssistant:
-  # LAN only: its DNS record points at network.nodeIp.
-  hostname: {q(ha_host)}
-""")
-    if on["immich"]:
-        blocks.append(f"""\
-immich:
-  # Public, so albums can be shared.
-  hostname: {q(immich_host)}
-  # NFS export on nas.server with the photo library, mounted as an external library.
-  libraryPath: {q(library)}
-""")
-    if on["monitoring"]:
-        blocks.append(f"""\
-grafana:
-  # LAN only: its DNS record points at network.nodeIp.
-  hostname: {q(grafana_host)}
-""")
-    if on["postgres"]:
-        pg_lines = "".join(f"    {q(n)}: {q(pg_clusters.get(n) or {})}\n" for n in pg_names)
-        blocks.append(f"""\
-postgres:
-  # One Postgres cluster per entry, in the namespace of that name (charts/postgres). Settings per
-  # cluster override the chart's: size (e.g. 20Gi).
-  clusters:
-{pg_lines}  # NFS export on nas.server for the nightly dumps, one directory per cluster.
-  backupPath: {q(pg_backup)}
-""")
+"""
+    infra_lines = [
+        "# What helmfile installs besides the base (infrastructure/base: cert-manager, LVM LocalPV, the",
+        "# cluster chart). Turning one off only stops managing it: helm uninstall removes it, and keeps",
+        "# its volumes.",
+        "infrastructure:",
+    ]
+    for n, s in components.items():
+        infra_lines += [f"  # {line}" for line in textwrap.wrap(f"infrastructure/{n}: {s.get('description', '')}.", 96)]
+        infra_lines.append(f"  {n}: {q(infra[n])}")
+
+    shared = [
+        ("acmeEmail", "Let's Encrypt account email.", email),
+        ("acme.zones", "How cert-manager proves control of each DNS zone, by solver name "
+                       "(infrastructure/base/chart/values.yaml): gandi: DNS-01 through the Gandi LiveDNS API "
+                       "(site.secret.yaml: gandi.pat), allows wildcards; http01: HTTP-01 through Traefik on "
+                       "port 80, the hostname must already resolve to this node.",
+         {z: "gandi" for z in gandi_zones}),
+        ("acme.defaultSolver", "Every zone not listed above.", default_solver),
+        ("timezone", None, tz),
+        ("timezonePosix", "The same zone in POSIX form, for images without tzdata (the backup jobs).", tz_posix),
+        ("network.lanCidr", "Clients allowed through the lan-only middleware.", lan_cidr),
+        ("network.nodeIp", "The k3s node's LAN IP. Home Assistant runs on the host network, so its "
+                           "traffic comes from here.", node_ip),
+        ("network.podCidr", "k3s defaults: the pod network, and cni0's address on it.", pod_cidr),
+        ("network.podGateway", None, pod_gw),
+        ("nas.server", "NFS server for the exports in this file. Each must allow the node's IP.", nas),
+    ]
+    if nas_path:
+        shared.append(("nas.path", "Export for home's nightly backups.", nas_path))
+    shared.append(("lvm.volumeGroup", "LVM volume group on the node for the size-capped volumes "
+                                      "(StorageClass lvm). Its unallocated space is all they can use. "
+                                      "Ubuntu's installer names it ubuntu-vg.", vg))
+
+    app_lines = ["# One entry per app, installed in the namespace of its name. apps/<app>/app.yaml describes it",
+                 "# (app: names it, else the entry's name); an entry without one only gets what it sets itself:",
+                 "# database (a Postgres cluster), or chart, version and values (a chart from elsewhere). Its",
+                 "# other keys are the app's settings, and override its chart's defaults.",
+                 "apps:"]
+    for name, (definition, entries) in app_blocks.items():
+        if definition in app_defs:
+            desc = app_defs[definition].get("description", "")
+            app_lines += [f"  # {line}" for line in textwrap.wrap(f"apps/{definition}: {desc}.", 96)]
+        app_lines.append(f"  {name}:" if entries or definition != name else f"  {name}: {{}}")
+        if definition != name:
+            app_lines.append(f"    app: {q(definition)}")
+        app_lines += emit(tree([e for e in entries if e[0] != "app"]), 2)
+
+    blocks = [header, "\n".join(infra_lines) + "\n", "\n".join(emit(tree(shared))) + "\n"]
+    if component_entries:
+        blocks.append("\n".join(emit(tree(component_entries))) + "\n")
+    blocks.append("\n".join(app_lines) + "\n")
     text = "\n".join(blocks)
 
-    old = OUT.read_text() if OUT.exists() else ""
+    if example:
+        out.write_text(text)
+        return
+    old = out.read_text() if out.exists() else ""
     if old == text:
-        print(f"\n{OUT.name} 沒有變更。")
+        print(f"\n{out.name} 沒有變更。")
         return
     print("\n".join(difflib.unified_diff(old.splitlines(), text.splitlines(), "目前", "新的", lineterm="")))
-    if input(f"\n寫入 {OUT}？[Y/n] ").strip().lower() in ("", "y", "yes"):
-        OUT.parent.mkdir(parents=True, exist_ok=True)
-        OUT.write_text(text)
+    if input(f"\n寫入 {out}？[Y/n] ").strip().lower() in ("", "y", "yes"):
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text)
         print("已寫入。下一步：helmfile diff")
     else:
         print("沒有寫入。")

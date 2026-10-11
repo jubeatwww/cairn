@@ -1,0 +1,14 @@
+# Fields: apps/home/app.yaml.
+description: Immich, public, with the photo library on the NAS
+timeout: 900
+site:
+  hostname:
+    comment: Public, so albums can be shared.
+    ask: Immich 的主機名稱（公開）
+    example: immich.example.com
+    check: hostname
+  libraryPath:
+    comment: NFS export on nas.server with the photo library, mounted as an external library.
+    ask: 照片庫在 NAS 上的 export 路徑
+    example: /volume1/photos
+    check: absPath

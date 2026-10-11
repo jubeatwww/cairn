@@ -1,34 +1,32 @@
 # Example site.yaml: copy it to site.yaml in the site directory ($CAIRN_SITE, else the repo root,
-# where it's gitignored) and fill in, or run scripts/configure.py.
+# where it's gitignored) and fill in, or run scripts/configure.py, which also writes this file
+# (--example) from the examples in infrastructure/*/component.yaml and apps/*/app.yaml.
 # Placeholder values only. The real ones describe a home network and stay out of the public repo.
 
-# What scripts/apply.sh installs besides cert-manager, LVM LocalPV and charts/cluster. Turning one
-# off only stops managing it: helm uninstall removes it, and keeps its volumes.
-components:
-  # charts/home: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup.
-  home: true
-  # charts/immich: Immich, public.
-  immich: true
-  # kube-prometheus-stack, Loki and Alloy (helm/), charts/monitoring. Alerts go to Discord
-  # (site.secret.yaml: discord.webhookUrl).
+# What helmfile installs besides the base (infrastructure/base: cert-manager, LVM LocalPV, the
+# cluster chart). Turning one off only stops managing it: helm uninstall removes it, and keeps
+# its volumes.
+infrastructure:
+  # infrastructure/monitoring: Prometheus, Alertmanager, Grafana, Loki and Alloy; alerts go to
+  # Discord (site.secret.yaml discord.webhookUrl).
   monitoring: true
-  # CloudNativePG (helm/), and charts/postgres for each of postgres.clusters.
+  # infrastructure/postgres: CloudNativePG, for the apps' Postgres clusters.
   postgres: true
 
 # Let's Encrypt account email.
 acmeEmail: you@example.com
-# How cert-manager proves control of each DNS zone, by solver name (charts/cluster/values.yaml):
-#   gandi   DNS-01 through the Gandi LiveDNS API (site.secret.yaml: gandi.pat). Allows wildcards.
-#   http01  HTTP-01 through Traefik on port 80. The hostname must already resolve to this node.
 acme:
+  # How cert-manager proves control of each DNS zone, by solver name
+  # (infrastructure/base/chart/values.yaml): gandi: DNS-01 through the Gandi LiveDNS API
+  # (site.secret.yaml: gandi.pat), allows wildcards; http01: HTTP-01 through Traefik on port 80, the
+  # hostname must already resolve to this node.
   zones:
     example.com: gandi
   # Every zone not listed above.
   defaultSolver: http01
 timezone: Etc/UTC
-# The same zone in POSIX form, for images without tzdata (the backup job).
+# The same zone in POSIX form, for images without tzdata (the backup jobs).
 timezonePosix: UTC0
-
 network:
   # Clients allowed through the lan-only middleware.
   lanCidr: 192.168.0.0/24
@@ -37,44 +35,48 @@ network:
   # k3s defaults: the pod network, and cni0's address on it.
   podCidr: 10.42.0.0/16
   podGateway: 10.42.0.1
-
 nas:
   # NFS server for the exports in this file. Each must allow the node's IP.
   server: 192.168.0.20
-  # Export for charts/home's nightly backups.
+  # Export for home's nightly backups.
   path: /volume1/backup
-
-zigbee:
-  # Coordinator on the node. by-id names follow the USB chip, not the port it's plugged into.
-  device: /dev/serial/by-id/usb-<vendor>_<product>-if00-port0
-  # zstack for TI chips (CC2652, CC2530). Other chips: see Zigbee2MQTT's adapter docs.
-  adapter: zstack
-
 lvm:
   # LVM volume group on the node for the size-capped volumes (StorageClass lvm). Its unallocated
   # space is all they can use. Ubuntu's installer names it ubuntu-vg.
   volumeGroup: ubuntu-vg
 
-homeAssistant:
-  # LAN only: its DNS record points at network.nodeIp.
-  hostname: ha.example.com
-
-immich:
-  # Public, so albums can be shared.
-  hostname: immich.example.com
-  # NFS export on nas.server with the photo library, mounted as an external library.
-  libraryPath: /volume1/photos
-
 grafana:
   # LAN only: its DNS record points at network.nodeIp.
   hostname: grafana.example.com
-
 postgres:
-  # One Postgres cluster per entry, in the namespace of that name (charts/postgres). Settings per
-  # cluster override the chart's: size (e.g. 20Gi).
-  clusters:
-    shop: {}
-    shop-staging: {}
-    notes: {size: 2Gi}
-  # NFS export on nas.server for the nightly dumps, one directory per cluster.
+  # NFS export on nas.server for the nightly dumps, one directory per database.
   backupPath: /volume1/pg-dumps
+
+# One entry per app, installed in the namespace of its name. apps/<app>/app.yaml describes it
+# (app: names it, else the entry's name); an entry without one only gets what it sets itself:
+# database (a Postgres cluster), or chart, version and values (a chart from elsewhere). Its
+# other keys are the app's settings, and override its chart's defaults.
+apps:
+  # apps/home: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup.
+  home:
+    # LAN only: its DNS record points at network.nodeIp.
+    hostname: ha.example.com
+    zigbee:
+      # Zigbee coordinator on the node. by-id names follow the USB chip, not the port it's plugged
+      # into.
+      device: /dev/serial/by-id/usb-<vendor>_<product>-if00-port0
+      # zstack for TI chips (CC2652, CC2530). Other chips: see Zigbee2MQTT's adapter docs.
+      adapter: zstack
+  # apps/immich: Immich, public, with the photo library on the NAS.
+  immich:
+    # Public, so albums can be shared.
+    hostname: immich.example.com
+    # NFS export on nas.server with the photo library, mounted as an external library.
+    libraryPath: /volume1/photos
+  shop:
+    database: {}
+  shop-staging:
+    database: {}
+  notes:
+    database:
+      size: 2Gi

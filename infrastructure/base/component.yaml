@@ -1,0 +1,41 @@
+# Always installed: certificates, storage, and the cluster-wide settings in chart/. Its site settings
+# (acmeEmail, acme, timezone, network, nas, lvm) are the shared ones, asked by scripts/configure.py
+# itself.
+#
+# A component's releases, read by helmfile.yaml.gotmpl:
+#   name, namespace  the release
+#   chart            repo/chart (repo from repositories below) or ./chart, this directory's
+#   version          exact chart version, for repo charts
+#   timeout          seconds to wait for it to be ready (default 300)
+#   needs            namespace/release installed first; ones that aren't installed are dropped
+#   site             site: gets site.yaml; secrets: also site.secret.yaml. Unset (third-party
+#                    charts): gets <name>.yaml in this directory instead.
+#   when             only if this holds: gandiSolver (a zone in acme.zones uses gandi)
+# Every release then gets the site directory's values/<name>.yaml, if there is one.
+description: cert-manager, OpenEBS LVM LocalPV, ClusterIssuers, the StorageClass lvm, Traefik settings
+repositories:
+  jetstack: https://charts.jetstack.io
+  sintef: https://sintef.github.io/cert-manager-webhook-gandi
+  openebs-lvm: https://openebs.github.io/lvm-localpv
+releases:
+  # First: its CRDs back the ClusterIssuers and every Certificate.
+  - name: cert-manager
+    namespace: cert-manager
+    chart: jetstack/cert-manager
+    version: v1.21.2
+  - name: cert-manager-webhook-gandi
+    namespace: cert-manager
+    chart: sintef/cert-manager-webhook-gandi
+    version: v0.6.0
+    needs: [cert-manager/cert-manager]
+    when: gandiSolver
+  - name: lvm-localpv
+    namespace: openebs
+    chart: openebs-lvm/lvm-localpv
+    version: 1.10.1
+  # The ClusterIssuers (with the Gandi PAT's Secret), the StorageClass lvm, Traefik's settings.
+  - name: cluster
+    namespace: kube-system
+    chart: ./chart
+    site: secrets
+    needs: [cert-manager/cert-manager, cert-manager/cert-manager-webhook-gandi, openebs/lvm-localpv]

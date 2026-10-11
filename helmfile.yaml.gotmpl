@@ -1,8 +1,13 @@
 # Everything this repo installs, in dependency order, rendered with the site directory: $CAIRN_SITE
-# (absolute), else the repo root. Run from anywhere:
+# (absolute), else the repo root. The releases come from data, so adding a component or an app
+# doesn't touch this file:
+#   infrastructure/<name>/component.yaml  base always; the others when site.yaml's
+#                                         infrastructure.<name> is true
+#   apps.<name> in site.yaml              one app each, defined by apps/<app>/app.yaml (app: in
+#                                         the entry, else its name), or by chart: in the entry
 #
-#   helmfile -f <repo>/helmfile.yaml.gotmpl diff     what would change (needs the helm-diff plugin)
-#   helmfile -f <repo>/helmfile.yaml.gotmpl apply    install or upgrade what changed
+#   helmfile diff     what would change (needs the helm-diff plugin)
+#   helmfile apply    install or upgrade what changed
 #
 # Uses $KUBECONFIG, else ~/.kube/config.
 {{- $site := env "CAIRN_SITE" | default "." }}
@@ -12,15 +17,93 @@ environments:
       - {{ $site }}/site.yaml
 ---
 {{- $site := env "CAIRN_SITE" | default "." }}
-{{- $components := required "components is required (site.yaml): run scripts/configure.py" .Values.components }}
-{{- range $name := list "home" "immich" "monitoring" "postgres" }}
-{{- if not (kindIs "bool" (index $components $name)) }}
-{{- fail (printf "components.%s must be true or false (site.yaml): run scripts/configure.py" $name) }}
-{{- end }}
-{{- end }}
+{{- $infra := .Values.infrastructure | default dict }}
+{{- $apps := .Values.apps | default dict }}
 {{- $acme := .Values.acme | default dict }}
-{{- $gandi := has "gandi" (append (values ($acme.zones | default dict)) ($acme.defaultSolver | default "")) }}
-{{- $pg := ((.Values.postgres | default dict).clusters | default dict) }}
+{{- /* Conditions a component's release can name in when:. */}}
+{{- $when := dict "gandiSolver" (has "gandi" (append (values ($acme.zones | default dict)) ($acme.defaultSolver | default ""))) }}
+
+{{- $components := list "base" }}
+{{- range $name, $on := $infra }}
+{{- if not (kindIs "bool" $on) }}{{ fail (printf "infrastructure.%s must be true or false (site.yaml)" $name) }}{{ end }}
+{{- if not (isFile (printf "infrastructure/%s/component.yaml" $name)) }}{{ fail (printf "infrastructure.%s (site.yaml): there's no infrastructure/%s/component.yaml" $name $name) }}{{ end }}
+{{- if $on }}{{ $components = append $components $name }}{{ end }}
+{{- end }}
+
+{{- $releases := list }}
+{{- $repos := dict }}
+
+{{- /* Components. A local chart gets site.yaml (and site.secret.yaml), a third-party one its
+       <release>.yaml; both then get the site's values/<release>.yaml. */}}
+{{- range $c := $components }}
+{{- $dir := printf "infrastructure/%s" $c }}
+{{- $spec := readFile (printf "%s/component.yaml" $dir) | fromYaml }}
+{{- range $name, $url := $spec.repositories | default dict }}{{ $_ := set $repos $name $url }}{{ end }}
+{{- range $r := $spec.releases }}
+{{- if or (not (hasKey $r "when")) (index $when $r.when) }}
+{{- $values := list }}
+{{- if hasKey $r "site" }}
+{{- $values = append $values (printf "%s/site.yaml" $site) }}
+{{- if and (eq $r.site "secrets") (isFile (printf "%s/site.secret.yaml" $site)) }}{{ $values = append $values (printf "%s/site.secret.yaml" $site) }}{{ end }}
+{{- else if isFile (printf "%s/%s.yaml" $dir $r.name) }}
+{{- $values = append $values (printf "%s/%s.yaml" $dir $r.name) }}
+{{- end }}
+{{- if isFile (printf "%s/values/%s.yaml" $site $r.name) }}{{ $values = append $values (printf "%s/values/%s.yaml" $site $r.name) }}{{ end }}
+{{- $chart := $r.chart }}
+{{- if hasPrefix "./" $chart }}{{ $chart = printf "./%s/%s" $dir (trimPrefix "./" $chart) }}{{ end }}
+{{- $rel := dict "name" $r.name "namespace" $r.namespace "chart" $chart "labels" (dict "component" $c) "needs" (get "needs" list $r) "values" $values }}
+{{- if hasKey $r "version" }}{{ $_ := set $rel "version" $r.version }}{{ end }}
+{{- if hasKey $r "timeout" }}{{ $_ := set $rel "timeout" $r.timeout }}{{ end }}
+{{- $releases = append $releases $rel }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- /* Apps: the entry in site.yaml over apps/<app>/app.yaml. Release <name> in namespace <name>
+       gets site.yaml, the entry's values: files, then the entry itself (its site settings, and any
+       chart value to override). A database adds release postgres in the same namespace. */}}
+{{- range $name, $entry := $apps }}
+{{- $entry = $entry | default dict }}
+{{- if not (kindIs "map" $entry) }}{{ fail (printf "apps.%s must be a map (site.yaml)" $name) }}{{ end }}
+{{- $dir := printf "apps/%s" (get "app" $name $entry) }}
+{{- $spec := dict }}
+{{- if isFile (printf "%s/app.yaml" $dir) }}{{ $spec = readFile (printf "%s/app.yaml" $dir) | fromYaml }}
+{{- else if hasKey $entry "app" }}{{ fail (printf "apps.%s.app (site.yaml): there's no %s/app.yaml" $name $dir) }}{{ end }}
+{{- $spec = mergeOverwrite $spec (deepCopy $entry) }}
+{{- $needs := list "kube-system/cluster" }}
+{{- if hasKey $spec "database" }}
+{{- if not (get "postgres" false $infra) }}{{ fail (printf "apps.%s.database needs infrastructure.postgres (site.yaml)" $name) }}{{ end }}
+{{- $db := $spec.database | default dict }}
+{{- $dbValues := dict }}
+{{- if hasKey $db "size" }}{{ $_ := set $dbValues "storage" (dict "size" $db.size) }}{{ end }}
+{{- if hasKey $db "image" }}{{ $_ := set $dbValues "image" $db.image }}{{ end }}
+{{- $releases = append $releases (dict "name" "postgres" "namespace" $name "chart" "./charts/postgres-cluster" "timeout" 600 "labels" (dict "app" $name) "needs" (list "cnpg-system/cloudnative-pg") "values" (list (printf "%s/site.yaml" $site) $dbValues)) }}
+{{- $needs = append $needs (printf "%s/postgres" $name) }}
+{{- end }}
+{{- $chart := get "chart" "" $spec }}
+{{- if and (not $chart) (isDir (printf "%s/chart" $dir)) }}{{ $chart = printf "./%s/chart" $dir }}{{ end }}
+{{- if $chart }}
+{{- if and (or (hasPrefix "oci://" $chart) (contains "::" $chart)) (not (hasKey $spec "version")) (not (contains "ref=" $chart)) }}
+{{- fail (printf "apps.%s.chart (site.yaml): pin it, with version: or ?ref= in a git URL" $name) }}
+{{- end }}
+{{- $values := list (printf "%s/site.yaml" $site) }}
+{{- range $v := get "values" list $spec }}{{ $values = append $values $v }}{{ end }}
+{{- $values = append $values (omit $entry "app" "chart" "version" "values" "timeout" "needs") }}
+{{- $rel := dict "name" $name "namespace" $name "chart" $chart "labels" (dict "app" $name) "needs" (concat $needs (get "needs" list $spec)) "values" $values }}
+{{- if hasKey $spec "version" }}{{ $_ := set $rel "version" $spec.version }}{{ end }}
+{{- if hasKey $spec "timeout" }}{{ $_ := set $rel "timeout" $spec.timeout }}{{ end }}
+{{- $releases = append $releases $rel }}
+{{- end }}
+{{- end }}
+
+{{- /* needs: only releases that are installed. */}}
+{{- $ids := dict }}
+{{- range $r := $releases }}{{ $_ := set $ids (printf "%s/%s" $r.namespace $r.name) true }}{{ end }}
+{{- range $r := $releases }}
+{{- $keep := list }}
+{{- range $n := $r.needs }}{{ if hasKey $ids $n }}{{ $keep = append $keep $n }}{{ end }}{{ end }}
+{{- $_ := set $r "needs" $keep }}
+{{- end }}
 
 helmDefaults:
   wait: true
@@ -28,138 +111,10 @@ helmDefaults:
   createNamespace: true
 
 repositories:
-  - name: jetstack
-    url: https://charts.jetstack.io
-  - name: sintef
-    url: https://sintef.github.io/cert-manager-webhook-gandi
-  - name: openebs-lvm
-    url: https://openebs.github.io/lvm-localpv
-  - name: prometheus-community
-    url: https://prometheus-community.github.io/helm-charts
-  - name: grafana
-    url: https://grafana.github.io/helm-charts
-  - name: cnpg
-    url: https://cloudnative-pg.github.io/charts
-
-# A release's values: its chart's defaults, then site.yaml (and site.secret.yaml for the charts
-# that turn secrets into Secrets), then the site's override values/<release>.yaml if there is one.
-templates:
-  site:
-    missingFileHandler: Debug
-    values:
-      - {{ $site }}/site.yaml
-      - {{ $site }}/values/{{`{{ .Release.Name }}`}}.yaml
-  siteSecrets:
-    missingFileHandler: Debug
-    values:
-      - {{ $site }}/site.yaml
-      - {{ $site }}/site.secret.yaml
-      - {{ $site }}/values/{{`{{ .Release.Name }}`}}.yaml
-  override:
-    missingFileHandler: Debug
-    values:
-      - helm/{{`{{ .Release.Name }}`}}/values.yaml
-      - {{ $site }}/values/{{`{{ .Release.Name }}`}}.yaml
+{{- range $name, $url := $repos }}
+  - name: {{ $name }}
+    url: {{ $url }}
+{{- end }}
 
 releases:
-  # cert-manager first: its CRDs back the ClusterIssuers and Certificates in the local charts.
-  - name: cert-manager
-    namespace: cert-manager
-    chart: jetstack/cert-manager
-    version: v1.21.2
-    inherit: [{template: override}]
-{{- if $gandi }}
-  # Only when a zone uses the gandi solver.
-  - name: cert-manager-webhook-gandi
-    namespace: cert-manager
-    chart: sintef/cert-manager-webhook-gandi
-    version: v0.6.0
-    inherit: [{template: override}]
-    needs: [cert-manager/cert-manager]
-{{- end }}
-  - name: lvm-localpv
-    namespace: openebs
-    chart: openebs-lvm/lvm-localpv
-    version: 1.10.1
-    inherit: [{template: override}]
-  # The ClusterIssuers, and the StorageClass lvm the other volumes use.
-  - name: cluster
-    namespace: kube-system
-    chart: ./charts/cluster
-    inherit: [{template: siteSecrets}]
-    needs:
-      - cert-manager/cert-manager
-{{- if $gandi }}
-      - cert-manager/cert-manager-webhook-gandi
-{{- end }}
-      - openebs/lvm-localpv
-
-{{- if $components.monitoring }}
-  # kube-prometheus-stack brings the ServiceMonitor and PodMonitor CRDs.
-  - name: kube-prometheus-stack
-    namespace: monitoring
-    chart: prometheus-community/kube-prometheus-stack
-    version: 91.9.0
-    timeout: 600
-    inherit: [{template: override}]
-    needs: [kube-system/cluster]
-  - name: loki
-    namespace: monitoring
-    chart: grafana/loki
-    version: 7.3.0
-    timeout: 600
-    inherit: [{template: override}]
-    needs: [monitoring/kube-prometheus-stack]
-  - name: alloy
-    namespace: monitoring
-    chart: grafana/alloy
-    version: 1.13.0
-    inherit: [{template: override}]
-    needs: [monitoring/loki]
-  # Grafana's Ingress and the Discord webhook's Secret.
-  - name: monitoring
-    namespace: monitoring
-    chart: ./charts/monitoring
-    inherit: [{template: siteSecrets}]
-    needs: [monitoring/kube-prometheus-stack]
-{{- end }}
-
-{{- if $components.postgres }}
-  - name: cloudnative-pg
-    namespace: cnpg-system
-    chart: cnpg/cloudnative-pg
-    version: 0.29.1
-    inherit: [{template: override}]
-    needs:
-      - kube-system/cluster
-{{- if $components.monitoring }}
-      - monitoring/kube-prometheus-stack
-{{- end }}
-  # One Postgres cluster per namespace in site.yaml's postgres.clusters.
-{{- range $ns, $_ := $pg }}
-  - name: postgres
-    namespace: {{ $ns }}
-    chart: ./charts/postgres
-    timeout: 600
-    inherit: [{template: site}]
-    needs: [cnpg-system/cloudnative-pg]
-{{- end }}
-{{- end }}
-
-{{- if $components.home }}
-  - name: home
-    namespace: home
-    chart: ./charts/home
-    timeout: 600
-    inherit: [{template: site}]
-    needs: [kube-system/cluster]
-{{- end }}
-
-{{- if $components.immich }}
-  - name: immich
-    namespace: immich
-    chart: ./charts/immich
-    timeout: 900
-    inherit: [{template: site}]
-    needs: [kube-system/cluster]
-{{- end }}
+{{- toYaml $releases | nindent 2 }}

@@ -1,0 +1,31 @@
+# An app, installed for each entry in site.yaml's apps whose app is this directory (the entry's own
+# name unless it sets app:). Read by helmfile.yaml.gotmpl and scripts/configure.py:
+#   description  what it runs
+#   timeout      seconds to wait for it to be ready (default 300)
+#   needs        namespace/release installed first, besides kube-system/cluster
+#   database     a Postgres cluster in its namespace (charts/postgres-cluster); size, image
+#   site         the settings it reads from apps.<name> in site.yaml, asked by scripts/configure.py:
+#                key (dotted, under apps.<name>): comment, ask, example, check, default, detect
+#                (as in infrastructure/monitoring/component.yaml)
+# The chart is chart/ in this directory. An entry in site.yaml can override any of these, and set
+# chart, version and values to install a chart from elsewhere.
+description: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup
+timeout: 600
+site:
+  hostname:
+    comment: "LAN only: its DNS record points at network.nodeIp."
+    ask: Home Assistant 的主機名稱（只限內網）
+    example: ha.example.com
+    check: hostname
+  zigbee.device:
+    comment: Zigbee coordinator on the node. by-id names follow the USB chip, not the port it's plugged into.
+    ask: Zigbee 協調器
+    example: /dev/serial/by-id/usb-<vendor>_<product>-if00-port0
+    check: absPath
+    detect: serialDevice
+  zigbee.adapter:
+    comment: "zstack for TI chips (CC2652, CC2530). Other chips: see Zigbee2MQTT's adapter docs."
+    ask: Zigbee adapter 類型
+    example: zstack
+    default: zstack
+    check: zigbeeAdapter

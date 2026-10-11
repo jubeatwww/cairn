@@ -1,8 +1,0 @@
-# https://github.com/cloudnative-pg/charts/tree/main/charts/cloudnative-pg
-# The CloudNativePG operator, watching every namespace. The Postgres clusters are in charts/postgres.
-
-monitoring:
-  # CloudNativePG's dashboard, loaded by Grafana's sidecar (helm/kube-prometheus-stack), which
-  # picks up ConfigMaps labelled grafana_dashboard: "1" in any namespace.
-  grafanaDashboard:
-    create: true
