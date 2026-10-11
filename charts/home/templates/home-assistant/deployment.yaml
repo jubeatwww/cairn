@@ -16,8 +16,9 @@ spec:
       labels:
         app.kubernetes.io/name: home-assistant
     spec:
-      # On the node's network so mDNS reaches the LAN: the iPhone finds the HomeKit Bridge (TCP 21064,
-      # the first port HA picks for a UI-created bridge) and LAN discovery (e.g. Yeelight) works.
+      # On the node's network so mDNS reaches the LAN: the iPhones find the HomeKit Bridges (TCP 21064,
+      # 21065: HA gives each UI-created bridge the next port, one bridge per Apple Home) and LAN
+      # discovery (e.g. Yeelight) works.
       # Needs ufw rules on the node, see README "Restore".
       hostNetwork: true
       # Still resolve cluster Services (mosquitto.<namespace>.svc.cluster.local) on the host network.

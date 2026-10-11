@@ -67,7 +67,7 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
    ```sh
    ufw allow from 10.42.0.0/16 comment 'k3s pods'
    ufw allow from 10.43.0.0/16 comment 'k3s services'
-   ufw allow from <lanCidr> to any port 21064 proto tcp comment 'HomeKit Bridge'
+   ufw allow from <lanCidr> to any port 21064:21065 proto tcp comment 'HomeKit Bridges'
    ufw allow from <lanCidr> to any port 5353 proto udp comment 'mDNS'
    ```
    Leave unallocated space in an LVM volume group (`lvm.volumeGroup`) for the size-capped volumes, at least 90 GiB plus 5 GiB per Postgres cluster with the sizes in this repo (see [Storage](#storage)). Ubuntu's installer does that by default: it gives the root logical volume only part of the disk.
