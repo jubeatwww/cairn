@@ -32,8 +32,8 @@ charts/                charts the components and apps share
   app/                 the template for apps without a chart of their own
   backup/              nightly backup of an app's or component's volumes and database to the NAS
   postgres-cluster/    one app's Postgres cluster
-scripts/               helpers you run by hand: configure, Gandi and Discord setup, restore,
-                       Grafana's password
+scripts/               helpers you run by hand: configure.py (site.yaml), secret.py (site.secret.yaml),
+                       check.py (is everything healthy), restore.sh, set-grafana-password.sh
 site.example.yaml      the shape of site.yaml; site.secret.example.yaml for site.secret.yaml
 ```
 
@@ -146,10 +146,10 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
    mkdir -p ~/.kube && sudo install -m 600 -o "$USER" -g "$USER" /etc/rancher/k3s/k3s.yaml ~/.kube/config
    ```
 4. Put back your site directory (clone the private repo and set `CAIRN_SITE`, or copy the files into the repo root), or run `scripts/configure.py` to write `site.yaml`. Run it as well if the site changed (new IPs, NAS, Zigbee stick...).
-5. `scripts/setup-gandi-dns01.sh`: writes `site.secret.yaml` from a Gandi PAT, installs cert-manager and the cluster chart, and proves issuance with a staging certificate.
-6. `scripts/setup-discord-alerts.sh`: writes the Discord webhook for alerts to `site.secret.yaml` (see [Monitoring](#monitoring)). It installs kube-prometheus-stack too.
-7. `helmfile apply`
-8. Restore each app, and Grafana, from the NAS: `scripts/restore.sh <name> <YYYY-MM-DD>` (see [Backups](#backups)).
+5. Put back `site.secret.yaml`, or write its keys one at a time: `scripts/secret.py set gandi.pat` (a Gandi PAT, see [TLS](#tls)) and `scripts/secret.py set discord.webhookUrl` (see [Monitoring](#monitoring)). Each asks for the value without echoing it and checks it with Gandi or Discord before writing it.
+6. `helmfile apply`
+7. Restore each app, and Grafana, from the NAS: `scripts/restore.sh <name> <YYYY-MM-DD>` (see [Backups](#backups)).
+8. `scripts/check.py`: certificates, backups, Prometheus targets, rules and alerts. `--test-alert` sends one to Discord.
 
 ## TLS
 
@@ -169,7 +169,13 @@ acme:
 
 A domain on another DNS provider with an API needs a new entry under `solvers` (any cert-manager ACME solver) and its zone mapped to it in `site.yaml`; the templates don't change.
 
-The PAT expires. Before it does, create a new one in Gandi and run `scripts/setup-gandi-dns01.sh` again. The script checks the token, updates `site.secret.yaml` and the Secret, and proves issuance with a staging certificate. It checks the zones that use `gandi`; pass domains as arguments to check others.
+The PAT expires. Before it does, create a new one in Gandi (permission "Manage domain name technical configurations", scoped to your domains), then:
+
+```sh
+scripts/secret.py set gandi.pat        # checks it can manage every zone that uses gandi, then writes it
+helmfile apply -l name=cluster         # updates the Secret
+scripts/check.py                       # certificates still Ready
+```
 
 **A DNS-01 challenge stuck on "not yet propagated".** cert-manager checks the challenge's TXT record through public resolvers (1.1.1.1 and 8.8.8.8, see `infrastructure/base/cert-manager.yaml`) and needs all of them to see it. If one asked before Gandi had published the record, it caches the "doesn't exist" answer for the zone's negative TTL, about 3 hours. Compare what the resolvers return for `_acme-challenge.<hostname>` (TXT) with Gandi's own nameservers. Then either wait, or purge the stale answer: https://one.one.one.one/purge-cache/ for 1.1.1.1, https://dns.google/cache for 8.8.8.8. Renewals start 30 days before expiry, so a few hours' delay there doesn't matter.
 
@@ -249,7 +255,13 @@ kubectl -n monitoring get secret kube-prometheus-stack-grafana -o jsonpath='{.da
 
 Change it with `scripts/set-grafana-password.sh`, not in Grafana's UI. The sidecars that make Grafana reload dashboards and data sources log in with the Secret's copy, and the script sets both. After a rebuild, `scripts/restore.sh monitoring <YYYY-MM-DD>` brings back Grafana's database, your password included, but the Secret holds a newly generated one: run the script once more so both match.
 
-**Alerts** go to a Discord channel: every alert from kube-prometheus-stack's default rules (a volume filling up, a pod crash-looping, a node running out of memory...), grouped by namespace, again every 12 hours while it keeps firing, and once more when it resolves. Watchdog, which always fires to prove the pipeline works, is not sent. Set up or switch the channel with `scripts/setup-discord-alerts.sh`: it takes the channel's webhook URL (channel settings > Integrations > Webhooks > New Webhook > Copy Webhook URL), checks it, stores it in `site.secret.yaml`, applies it, and sends a test alert. The routing is in `infrastructure/monitoring/kube-prometheus-stack.yaml` (`alertmanager.config`).
+**Alerts** go to a Discord channel: every alert from kube-prometheus-stack's default rules (a volume filling up, a pod crash-looping, a node running out of memory...), grouped by namespace, again every 12 hours while it keeps firing, and once more when it resolves. Watchdog, which always fires to prove the pipeline works, is not sent. The routing is in `infrastructure/monitoring/kube-prometheus-stack.yaml` (`alertmanager.config`). To set up or switch the channel, copy its webhook URL (channel settings > Integrations > Webhooks > New Webhook > Copy Webhook URL), then:
+
+```sh
+scripts/secret.py set discord.webhookUrl          # checks it with Discord, then writes it
+helmfile apply -l component=monitoring            # the Secret, and Alertmanager reloads it
+scripts/check.py --test-alert                     # [FIRING] in ~30 s, [RESOLVED] in 5-7 min
+```
 
 Helm installs kube-prometheus-stack's CRDs only on the first install. After bumping its version, apply the new CRDs first, as its upgrade notes describe.
 
@@ -273,5 +285,5 @@ Kubernetes Secrets are base64, not encryption. **Plaintext secrets are never com
 
 - Secret values go in `site.secret.yaml` in the site directory; in the repo root it's gitignored (`*.secret.yaml`). `site.secret.example.yaml` lists the keys with placeholder values.
 - Any value there can instead be a reference that helmfile resolves when it renders ([vals](https://github.com/helmfile/vals), built into helmfile): `ref+sops://secrets.enc.yaml#/gandi/pat` (a SOPS-encrypted file, key from `SOPS_AGE_KEY_FILE`), `ref+op://<vault>/<item>/<field>` (1Password), `ref+envsubst://$VAR`, and more. A plain value is used as it is. A file path in a reference is relative to where you run helmfile.
-- The setup scripts write it through `scripts/secret.py`, which changes one key and keeps the others.
+- `scripts/secret.py set <key>` writes one key and keeps the others, asking for the value without echoing it. It checks the Gandi PAT and the Discord webhook with their services before writing them.
 - helmfile passes it to the cluster chart (the Gandi PAT) and the monitoring chart (the Discord webhook), and each app gets its own section, `apps.<name>` (merged over its entry; `charts/app` turns `secrets` into a Secret). The charts put secrets only in Secrets, which `helmfile diff` masks. Helm also keeps a copy in each release record, a Secret in the release's namespace.

@@ -14,7 +14,7 @@ apps/<name>/ describes (a database only, a chart from elsewhere) are kept as the
 Each question offers a default: the current site.yaml value, or one detected on this node (LAN IP
 and CIDR, timezone, Zigbee USB device, cni0 gateway, LVM volume group). Enter keeps it. Answers are
 validated, and the diff is shown before anything is written. Secrets are not asked here:
-scripts/setup-gandi-dns01.sh takes the Gandi PAT. Afterwards: helmfile diff.
+scripts/secret.py set <key> writes them. Afterwards: helmfile diff.
 """
 import difflib
 import glob
