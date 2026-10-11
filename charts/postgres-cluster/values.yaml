@@ -1,8 +1,8 @@
 # Chart defaults. helmfile.yaml.gotmpl installs it as release postgres in the namespace of each app
-# with a database (site.yaml: apps.<name>.database, which may set size and image); the NAS location
-# comes from site.yaml too. Each release holds one CloudNativePG Cluster (infrastructure/postgres)
-# named postgres: apps in that namespace connect to postgres-rw:5432 with the credentials in Secret
-# postgres-app.
+# with a database (site.yaml: apps.<name>.database, which may set size and image). Each release
+# holds one CloudNativePG Cluster (infrastructure/postgres) named postgres: apps in that namespace
+# connect to postgres-rw:5432 with the credentials in Secret postgres-app. The app's backup
+# (charts/backup) dumps it every night.
 
 # PostgreSQL from CloudNativePG's image catalog. standard: with pgvector, pgaudit and all locales.
 # site.yaml can pin one per app: apps.<name>.database.image. A new major version upgrades the data in
@@ -26,17 +26,6 @@ resources:
   limits:
     memory: 1Gi
 
-backup:
-  # Cron schedule, in site.yaml's timezone. After home's backup at 04:00.
-  schedule: "30 4 * * *"
-  # Days of dumps kept on the NAS.
-  keepDays: 14
-
 # Namespaces allowed in through the NetworkPolicy, besides the cluster's own.
 operatorNamespace: cnpg-system      # infrastructure/postgres: checks each instance's status
 prometheusNamespace: monitoring     # infrastructure/monitoring: scrapes the metrics
-
-# Set only by scripts/restore-postgres.sh, which renders templates/backup/restore-job.yaml on its own.
-restore:
-  date: ""
-  job: ""

@@ -33,8 +33,6 @@ SITE = pathlib.Path(os.environ.get("CAIRN_SITE") or REPO).resolve()
 ADAPTERS = ("zstack", "ember", "deconz", "zigate", "zboss", "ezsp")
 SOLVERS = ("gandi", "http01")  # names from infrastructure/base/chart/values.yaml, solvers
 K3S_NETS = ipaddress.ip_network("10.42.0.0/15")  # k3s pod and service networks
-# Keys of an apps entry that helmfile.yaml.gotmpl reads itself, not settings to ask about.
-APP_FIELDS = ("app", "chart", "version", "values", "timeout", "needs", "database")
 
 
 def sh(*cmd):
@@ -230,8 +228,15 @@ def migrate(cur):
         apps[ns] = {"database": settings or {}}
     for key in ("homeAssistant", "zigbee", "immich"):
         cur.pop(key, None)
-    if isinstance(cur.get("postgres"), dict):
-        cur["postgres"] = {k: v for k, v in cur["postgres"].items() if k != "clusters"}
+    return cur
+
+
+def migrate_backup(cur):
+    """Before charts/backup, home's backups went to nas.path and the dumps to postgres.backupPath."""
+    if not lookup(cur, "backup.path"):
+        old = lookup(cur, "nas.path") or lookup(cur, "postgres.backupPath")
+        if old:
+            cur = {**cur, "backup": {"path": old}}
     return cur
 
 
@@ -298,7 +303,7 @@ def main():
     if example:
         cur = {"apps": {"shop": {"database": {}}, "shop-staging": {"database": {}}, "notes": {"database": {"size": "2Gi"}}}}
     else:
-        cur = migrate(yaml.safe_load(out.read_text()) or {}) if out.exists() else {}
+        cur = migrate_backup(migrate(yaml.safe_load(out.read_text()) or {})) if out.exists() else {}
         print(f"設定 {out}：直接按 Enter 採用 [ ] 裡的值。\n")
     get = lambda key: lookup(cur, key)  # noqa: E731
     cur_apps = cur.get("apps") or {}
@@ -318,7 +323,7 @@ def main():
         email, gandi_zones, default_solver = "you@example.com", ["example.com"], "http01"
         tz, tz_posix = "Etc/UTC", "UTC0"
         node_ip, lan_cidr, pod_cidr, pod_gw = "192.168.0.10", "192.168.0.0/24", "10.42.0.0/16", "10.42.0.1"
-        nas, nas_path, vg = "192.168.0.20", "/volume1/backup", "ubuntu-vg"
+        nas, backup_path, vg = "192.168.0.20", "/volume1/backup", "ubuntu-vg"
     else:
         email = ask("\nLet's Encrypt 帳號 email", get("acmeEmail"), valid_email)
         print("憑證的驗證方式：gandi = DNS-01（Gandi API，可簽 wildcard）；http01 = HTTP-01（主機名稱要已經指到這台 node）")
@@ -341,7 +346,7 @@ def main():
         exports = sh("showmount", "-e", nas).strip()
         if exports:
             print("  NAS 上的 export：\n    " + "\n    ".join(exports.splitlines()[1:]))
-        nas_path = ask("home 每日備份的 NFS export 路徑", get("nas.path"), valid_abs_path) if "home" in on_apps else None
+        backup_path = ask("每日備份的 NFS export 路徑（每個 app 一個子目錄）", get("backup.path"), valid_abs_path)
 
         vgs = detect_volume_groups()
         print("\n這台機器上的 LVM volume group：" + ("、".join(vgs) if vgs else "（沒有）"))
@@ -416,12 +421,11 @@ def main():
         ("network.podCidr", "k3s defaults: the pod network, and cni0's address on it.", pod_cidr),
         ("network.podGateway", None, pod_gw),
         ("nas.server", "NFS server for the exports in this file. Each must allow the node's IP.", nas),
+        ("backup.path", "Export on nas.server for the nightly backups (charts/backup): "
+                        "<path>/<app>/YYYY-MM-DD/.", backup_path),
+        ("lvm.volumeGroup", "LVM volume group on the node for the size-capped volumes (StorageClass lvm). "
+                            "Its unallocated space is all they can use. Ubuntu's installer names it ubuntu-vg.", vg),
     ]
-    if nas_path:
-        shared.append(("nas.path", "Export for home's nightly backups.", nas_path))
-    shared.append(("lvm.volumeGroup", "LVM volume group on the node for the size-capped volumes "
-                                      "(StorageClass lvm). Its unallocated space is all they can use. "
-                                      "Ubuntu's installer names it ubuntu-vg.", vg))
 
     app_lines = ["# One entry per app, installed in the namespace of its name. apps/<app>/app.yaml describes it",
                  "# (app: names it, else the entry's name); an entry without one only gets what it sets itself:",

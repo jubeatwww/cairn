@@ -1,0 +1,5 @@
+apiVersion: v2
+name: backup
+description: Nightly backup of an app's or component's volumes and database to the NAS, and the Job that restores a day.
+type: application
+version: 0.1.0

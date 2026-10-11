@@ -30,7 +30,8 @@ apps/                  one directory per app
   immich/              Immich, public, with the photo library on the NAS
 charts/                charts the components and apps share
   app/                 the template for apps without a chart of their own
-  postgres-cluster/    one app's Postgres cluster, with nightly dumps
+  backup/              nightly backup of an app's or component's volumes and database to the NAS
+  postgres-cluster/    one app's Postgres cluster
 scripts/               helpers you run by hand: configure, Gandi and Discord setup, restore,
                        Grafana's password
 site.example.yaml      the shape of site.yaml; site.secret.example.yaml for site.secret.yaml
@@ -77,7 +78,7 @@ Keep a copy of the site directory somewhere safe (a private repo, a password man
 
 ### Adding an app
 
-1. `apps/<app>/app.yaml`: its `description`, `timeout`, `database` if it needs one, and under `site` the settings it reads from its entry in `site.yaml`, each with a comment, the question `scripts/configure.py` asks, an example for `site.example.yaml`, and a validator (fields: `apps/home/app.yaml`).
+1. `apps/<app>/app.yaml`: its `description`, `timeout`, `database` if it needs one, the volumes to `backup`, and under `site` the settings it reads from its entry in `site.yaml`, each with a comment, the question `scripts/configure.py` asks, an example for `site.example.yaml`, and a validator (fields: `apps/home/app.yaml`).
 2. What it runs, either way:
    - `apps/<app>/values.yaml` for the template `charts/app`: workloads (image, port, env, Ingress, volumes, the database's credentials...), documented in `charts/app/values.yaml`, example in `charts/app/examples/web.yaml`. Its hostnames are site settings: `hosts.<workload>` under `site` in `app.yaml`. Anything the template doesn't cover goes in `extraObjects`.
    - `apps/<app>/chart/`: a chart of its own. Templates read their settings from the root of `.Values` (`.Values.hostname`), and the shared ones from `site.yaml`'s sections (`.Values.network.lanCidr`).
@@ -148,8 +149,7 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
 5. `scripts/setup-gandi-dns01.sh`: writes `site.secret.yaml` from a Gandi PAT, installs cert-manager and the cluster chart, and proves issuance with a staging certificate.
 6. `scripts/setup-discord-alerts.sh`: writes the Discord webhook for alerts to `site.secret.yaml` (see [Monitoring](#monitoring)). It installs kube-prometheus-stack too.
 7. `helmfile apply`
-8. Restore the home automation state from the NAS: `scripts/restore-home.sh <YYYY-MM-DD>` (see [Backups](#backups)).
-9. Restore each Postgres database: `scripts/restore-postgres.sh <namespace> <YYYY-MM-DD>` (see [Postgres](#postgres)).
+8. Restore each app, and Grafana, from the NAS: `scripts/restore.sh <name> <YYYY-MM-DD>` (see [Backups](#backups)).
 
 ## TLS
 
@@ -175,10 +175,22 @@ The PAT expires. Before it does, create a new one in Gandi and run `scripts/setu
 
 ## Backups
 
-`apps/home` runs a CronJob every night at 04:00 that writes `YYYY-MM-DD/zigbee2mqtt.tar.gz` and `YYYY-MM-DD/home-assistant.tar.gz` to the NAS (`nas` in `site.yaml`), keeping 14 days. The Zigbee2MQTT archive holds the network key and paired devices, so restoring it avoids re-pairing everything. The Home Assistant archive holds `.storage` (users, areas, integrations, groups, HomeKit) and the automations, but not the history database.
+Every app with something to keep, and Grafana, gets a CronJob `backup` in its namespace (`charts/backup`). Every night at 04:00 it writes to the NAS export `backup.path` (`site.yaml`), under `<name>/YYYY-MM-DD/`:
 
-- Back up now: `kubectl -n home create job --from=cronjob/backup backup-manual-$(date +%s)`
-- Restore a day: `scripts/restore-home.sh 2026-10-09`. It stops both apps, unpacks the archives over their volumes, and starts them again.
+- `<pvc>.tar.gz` for each volume its `backup` lists (`app.yaml`, `component.yaml`, or its entry in `site.yaml`)
+- `database.dump` if it has a database: `pg_dump`, custom format
+
+It keeps 14 days (`keepDays`; `schedule` sets the time). A failed backup shows up in Discord as `KubeJobFailed`. What's in them:
+
+- home: Zigbee2MQTT's data (the network key and paired devices, so restoring it avoids re-pairing everything) and Home Assistant's `.storage` (users, areas, integrations, groups, HomeKit) and automations, but not the history database.
+- immich: Immich's own nightly database dumps, uploads from the apps and user files. Not the thumbnails and encoded videos (Immich rebuilds them from the originals), nor the library, which is on the NAS already.
+- monitoring: Grafana's database (users, preferences, dashboards made in the UI).
+- each app with a database: its dump. An entry that's only a database gets backed up the same way.
+
+`backup: false` in an entry turns it off.
+
+- Back up now: `kubectl -n <namespace> create job --from=cronjob/backup backup-manual-$(date +%s)`
+- Restore a day: `scripts/restore.sh <name> 2026-10-09`. It lists what it will restore and the workloads it will stop (those mounting the volumes, and with a database, those using its credentials), asks, stops them, restores the database (in one transaction; if anything fails, it stays as it was) and unpacks the archives over the volumes, then starts them again.
 
 ## Immich
 
@@ -214,7 +226,7 @@ In each of those namespaces:
 
 To add one, add `database: {}` to an app's entry (or an entry of its own) and run `helmfile apply`. `database` takes `size` to grow it online (`notes: {database: {size: 20Gi}}`) and `image` to pin its version. Removing it only stops helmfile from managing that cluster, and even `helm uninstall` leaves the Cluster and its data in place. Deleting it takes `kubectl -n <namespace> delete cluster postgres`, which removes the data too.
 
-**Backups.** Every night at 04:30, each database is dumped with `pg_dump` (custom format) to the NAS, as `<postgres.backupPath>/<namespace>/YYYY-MM-DD.dump`, and kept 14 days. A failed dump shows up in Discord as `KubeJobFailed`. To restore a day, stop the apps that use the database, then run `scripts/restore-postgres.sh <namespace> <YYYY-MM-DD>`. It lists the open connections, asks before changing anything, and replaces the database's contents in one transaction; if anything fails, the database stays as it was.
+**Backups.** Every database is dumped nightly with its app's backup, and restored with `scripts/restore.sh <name> <YYYY-MM-DD>` ([Backups](#backups)).
 
 **Upgrades.** For a new minor version, change `image` in `charts/postgres-cluster/values.yaml` and run `helmfile apply`; CloudNativePG restarts each instance on it. A new major version works the same way, but CloudNativePG then stops the instance and upgrades the data in place with `pg_upgrade`, which takes a few minutes. Try it on one cluster first (`database.image` in its entry, e.g. the uat one), right after a dump, and run `ANALYZE` afterwards, since `pg_upgrade` doesn't carry over the planner statistics.
 
@@ -235,7 +247,7 @@ Grafana comes with Prometheus, Alertmanager and Loki as data sources, and the us
 kubectl -n monitoring get secret kube-prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d
 ```
 
-Change it with `scripts/set-grafana-password.sh`, not in Grafana's UI. The sidecars that make Grafana reload dashboards and data sources log in with the Secret's copy, and the script sets both. Grafana's volume isn't backed up, so after a rebuild the password is a new generated one again; run the script to set yours.
+Change it with `scripts/set-grafana-password.sh`, not in Grafana's UI. The sidecars that make Grafana reload dashboards and data sources log in with the Secret's copy, and the script sets both. After a rebuild, `scripts/restore.sh monitoring <YYYY-MM-DD>` brings back Grafana's database, your password included, but the Secret holds a newly generated one: run the script once more so both match.
 
 **Alerts** go to a Discord channel: every alert from kube-prometheus-stack's default rules (a volume filling up, a pod crash-looping, a node running out of memory...), grouped by namespace, again every 12 hours while it keeps firing, and once more when it resolves. Watchdog, which always fires to prove the pipeline works, is not sent. Set up or switch the channel with `scripts/setup-discord-alerts.sh`: it takes the channel's webhook URL (channel settings > Integrations > Webhooks > New Webhook > Copy Webhook URL), checks it, stores it in `site.secret.yaml`, applies it, and sends a test alert. The routing is in `infrastructure/monitoring/kube-prometheus-stack.yaml` (`alertmanager.config`).
 
@@ -245,7 +257,7 @@ Helm installs kube-prometheus-stack's CRDs only on the first install. After bump
 
 Two StorageClasses, both on the node's disk:
 
-- `lvm` (`infrastructure/base/chart`, provisioned by OpenEBS LVM LocalPV): each volume is an LVM logical volume of exactly its requested size, in the volume group `lvm.volumeGroup` from `site.yaml`. The size is a hard cap: past it, writes fail with "no space left" and the root filesystem isn't touched. For volumes that keep growing: Prometheus (20 GiB), Loki (10 GiB), Immich's thumbnails and encoded videos (40 GiB), its Postgres (10 GiB) and model cache (10 GiB), each Postgres cluster (5 GiB by default).
+- `lvm` (`infrastructure/base/chart`, provisioned by OpenEBS LVM LocalPV): each volume is an LVM logical volume of exactly its requested size, in the volume group `lvm.volumeGroup` from `site.yaml`. The size is a hard cap: past it, writes fail with "no space left" and the root filesystem isn't touched. Like `local-path`, a volume can be mounted by more than one pod on the node (`shared`), so the nightly backup reads it while its app runs. For volumes that keep growing: Prometheus (20 GiB), Loki (10 GiB), Immich's thumbnails and encoded videos (40 GiB), its Postgres (10 GiB) and model cache (10 GiB), each Postgres cluster (5 GiB by default).
 - `local-path` (k3s's default): a directory on the root filesystem. The requested size is neither enforced nor reserved. For the small volumes that stay small: Home Assistant, Zigbee2MQTT, Grafana. Mounting them needs nothing but the node, so the home automation starts even when the LVM driver doesn't.
 
 The `lvm` volumes can only use the volume group's unallocated space. Volumes grow online, without restarting anything:

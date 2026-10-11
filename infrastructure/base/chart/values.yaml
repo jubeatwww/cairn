@@ -39,6 +39,11 @@ lvmStorageClass:
   fsType: ext4
   # No blocks reserved for root (ext4 keeps 5% by default): these volumes hold app data only.
   formatOptions: "-m 0"
+  # Let more than one pod on the node mount a volume, as local-path does: charts/backup reads the
+  # volumes while their apps run. A StorageClass's parameters can't change in place: changing this
+  # means deleting the StorageClass (its volumes stay) before helmfile apply, and patching each
+  # existing volume's LVMVolume (namespace openebs, spec.shared).
+  shared: "yes"
 
 # k3s's bundled Traefik, set through a HelmChartConfig.
 traefik:

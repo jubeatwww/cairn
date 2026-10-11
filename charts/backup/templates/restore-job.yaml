@@ -1,0 +1,61 @@
+{{- /* Rendered only by scripts/restore.sh (restore.date set), never by helm install/upgrade. */ -}}
+{{- with .Values.restore.date }}
+# Puts back that day's backup: the database first, in one transaction (if it fails, nothing has
+# changed), then each volume's archive, unpacked over what's there. scripts/restore.sh stops the
+# workloads that use them first.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $.Values.restore.job | default (printf "restore-%s" .) }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 0
+      initContainers:
+        {{- with $.Values.database }}
+        - name: database
+          image: {{ .image }}
+          env:
+            {{- include "backup.pgEnv" $ | trim | nindent 12 }}
+          command:
+            - bash
+            - -c
+            - |
+              set -euo pipefail
+              {{- include "backup.waitReady" $ | nindent 14 }}
+              dump={{ include "backup.dir" $ }}/{{ $.Values.restore.date }}/database.dump
+              ls -l "$dump"
+              pg_restore --clean --if-exists --no-owner --single-transaction --exit-on-error --dbname="$PGDATABASE" "$dump"
+          volumeMounts:
+            - name: nas
+              mountPath: /backup
+              readOnly: true
+        {{- end }}
+        {{- with $.Values.volumes }}
+        - name: files
+          image: {{ $.Values.images.tools }}
+          command:
+            - bash
+            - -c
+            - |
+              set -euo pipefail
+              src={{ include "backup.dir" $ }}/{{ $.Values.restore.date }}
+              ls -l "$src"
+              {{- range $pvc, $_ := . }}
+              tar -xzf "$src/{{ $pvc }}.tar.gz" -C /data/{{ $pvc }}
+              {{- end }}
+          volumeMounts:
+            {{- include "backup.mounts" (dict "root" $ "restore" true) | nindent 12 }}
+        {{- end }}
+      containers:
+        - name: done
+          image: {{ $.Values.images.tools }}
+          command: [echo, "restored {{ . }}"]
+      volumes:
+        {{- include "backup.volumes" (dict "root" $ "restore" true) | nindent 8 }}
+{{- end }}

@@ -38,7 +38,8 @@ network:
 nas:
   # NFS server for the exports in this file. Each must allow the node's IP.
   server: 192.168.0.20
-  # Export for home's nightly backups.
+backup:
+  # Export on nas.server for the nightly backups (charts/backup): <path>/<app>/YYYY-MM-DD/.
   path: /volume1/backup
 lvm:
   # LVM volume group on the node for the size-capped volumes (StorageClass lvm). Its unallocated
@@ -48,16 +49,13 @@ lvm:
 grafana:
   # LAN only: its DNS record points at network.nodeIp.
   hostname: grafana.example.com
-postgres:
-  # NFS export on nas.server for the nightly dumps, one directory per database.
-  backupPath: /volume1/pg-dumps
 
 # One entry per app, installed in the namespace of its name. apps/<app>/app.yaml describes it
 # (app: names it, else the entry's name); an entry without one only gets what it sets itself:
 # database (a Postgres cluster), or chart, version and values (a chart from elsewhere). Its
 # other keys are the app's settings, and override its chart's defaults.
 apps:
-  # apps/home: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup.
+  # apps/home: Mosquitto, Zigbee2MQTT, Home Assistant.
   home:
     # LAN only: its DNS record points at network.nodeIp.
     hostname: ha.example.com

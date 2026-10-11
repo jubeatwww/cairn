@@ -11,9 +11,3 @@ releases:
     version: 0.29.1
     # The PodMonitor CRD for its dashboard, when monitoring is on.
     needs: [kube-system/cluster, monitoring/kube-prometheus-stack]
-site:
-  postgres.backupPath:
-    comment: NFS export on nas.server for the nightly dumps, one directory per database.
-    ask: Postgres 每日備份在 NAS 上的 export 路徑
-    example: /volume1/pg-dumps
-    check: absPath

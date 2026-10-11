@@ -4,13 +4,24 @@
 #   timeout      seconds to wait for it to be ready (default 300)
 #   needs        namespace/release installed first, besides kube-system/cluster
 #   database     a Postgres cluster in its namespace (charts/postgres-cluster); size, image
+#   backup       what charts/backup puts on the NAS every night: volumes (PVC: exclude, paths),
+#                schedule, keepDays; the database is always included. false: no backup.
 #   site         the settings it reads from apps.<name> in site.yaml, asked by scripts/configure.py:
 #                key (dotted, under apps.<name>): comment, ask, example, check, default, detect
 #                (as in infrastructure/monitoring/component.yaml)
 # The chart is chart/ in this directory. An entry in site.yaml can override any of these, and set
 # chart, version and values to install a chart from elsewhere.
-description: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup
+description: Mosquitto, Zigbee2MQTT, Home Assistant
 timeout: 600
+backup:
+  volumes:
+    # Network key, coordinator backup, paired devices: restoring it avoids re-pairing everything.
+    zigbee2mqtt-data:
+      exclude: [./log]
+    # .storage (users, areas, integrations, HomeKit), automations, blueprints; not the history
+    # database, logs or caches.
+    home-assistant-config:
+      exclude: ['./home-assistant_v2.db*', './home-assistant.log*', ./deps, ./tts, ./backups]
 site:
   hostname:
     comment: "LAN only: its DNS record points at network.nodeIp."

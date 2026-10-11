@@ -1,0 +1,32 @@
+# Chart defaults. helmfile.yaml.gotmpl installs it as release backup in the namespace of each app
+# or component that has something to back up, with name, volumes and database filled in from its
+# backup: (app.yaml, component.yaml, or its entry in site.yaml, which can also override schedule and
+# keepDays). The NAS location and the timezone come from site.yaml.
+#
+# Every night it writes <backup.path>/<name>/YYYY-MM-DD/ on the NAS:
+#   <pvc>.tar.gz    one per volume
+#   database.dump   pg_dump of the app's Postgres cluster, custom format (pg_restore can pick from it)
+# and deletes the days older than keepDays. Restore: scripts/restore.sh <name> <YYYY-MM-DD>.
+
+images:
+  # bash, GNU tar, find.
+  tools: debian:trixie-20260918-slim
+
+# Cron schedule, in site.yaml's timezone.
+schedule: "0 4 * * *"
+# Days of backups kept on the NAS.
+keepDays: 14
+
+# The directory on the NAS, under backup.path: the app's or component's name.
+name: ""
+# PVC name: {exclude: [patterns], paths: [what to archive, relative to the volume's root]}. Without
+# paths, the whole volume.
+volumes: {}
+# {image}: dump the Postgres cluster in this namespace (Secret postgres-app) with this image, the
+# cluster's own, so pg_dump matches the server. Unset: no database.
+database: null
+
+# Set only by scripts/restore.sh, which renders templates/restore-job.yaml on its own.
+restore:
+  date: ""
+  job: ""

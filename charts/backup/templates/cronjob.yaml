@@ -1,0 +1,90 @@
+{{- if or .Values.volumes .Values.database }}
+# Nightly backup to the NAS (values.yaml). Each archive and dump is written as .partial and renamed
+# when complete. The node needs an NFS client (nfs-common) for kubelet to mount the share.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  timeZone: {{ required "timezone is required (site.yaml)" .Values.timezone }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          # Root: the images' own users (the Postgres image's is 26) may not read every file in the
+          # volumes; what it may write is up to the NAS export.
+          securityContext:
+            runAsUser: 0
+          initContainers:
+            {{- with .Values.database }}
+            - name: database
+              # The cluster's own image, so pg_dump matches the server's version.
+              image: {{ required "database.image is required (set by helmfile.yaml.gotmpl)" .image }}
+              env:
+                # POSIX form, so dates follow the site's timezone without tzdata.
+                - name: TZ
+                  value: {{ required "timezonePosix is required (site.yaml)" $.Values.timezonePosix }}
+                {{- include "backup.pgEnv" $ | trim | nindent 16 }}
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+                  {{- include "backup.waitReady" $ | nindent 18 }}
+                  dest={{ include "backup.dir" $ }}/$(date +%F)
+                  mkdir -p "$dest"
+                  pg_dump --format=custom --file="$dest/database.dump.partial"
+                  mv "$dest/database.dump.partial" "$dest/database.dump"
+              volumeMounts:
+                - name: nas
+                  mountPath: /backup
+            {{- end }}
+            {{- with .Values.volumes }}
+            - name: files
+              image: {{ $.Values.images.tools }}
+              env:
+                - name: TZ
+                  value: {{ $.Values.timezonePosix }}
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+                  dest={{ include "backup.dir" $ }}/$(date +%F)
+                  mkdir -p "$dest"
+                  {{- range $pvc, $spec := . }}
+                  tar -czf "$dest/{{ $pvc }}.tar.gz.partial" -C /data/{{ $pvc }}
+                  {{- range ($spec | default dict).exclude }} --exclude={{ squote . }}{{ end }}
+                  {{- with ($spec | default dict).paths }}{{ range . }} {{ squote . }}{{ end }}{{ else }} .{{ end }}
+                  mv "$dest/{{ $pvc }}.tar.gz.partial" "$dest/{{ $pvc }}.tar.gz"
+                  {{- end }}
+              volumeMounts:
+                {{- include "backup.mounts" (dict "root" $ "restore" false) | nindent 16 }}
+            {{- end }}
+          containers:
+            - name: prune
+              image: {{ .Values.images.tools }}
+              env:
+                - name: TZ
+                  value: {{ .Values.timezonePosix }}
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+                  dir={{ include "backup.dir" . }}
+                  find "$dir" -mindepth 1 -maxdepth 1 -type d -name '20??-??-??' -mtime +{{ int .Values.keepDays }} -exec rm -rf {} +
+                  ls -l "$dir/$(date +%F)"
+              volumeMounts:
+                - name: nas
+                  mountPath: /backup
+          volumes:
+            {{- include "backup.volumes" (dict "root" . "restore" false) | nindent 12 }}
+{{- end }}

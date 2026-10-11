@@ -1,6 +1,13 @@
 # Fields: apps/home/app.yaml.
 description: Immich, public, with the photo library on the NAS
 timeout: 900
+backup:
+  volumes:
+    # Immich's nightly database dumps (backups/), and what isn't on the NAS already: uploads from
+    # the apps, user files. Thumbnails and encoded videos are left out: Immich rebuilds them from
+    # the originals.
+    immich-data:
+      paths: [backups, upload, library, profile]
 site:
   hostname:
     comment: Public, so albums can be shared.

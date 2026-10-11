@@ -13,6 +13,9 @@ parameters:
   {{- with .formatOptions }}
   formatOptions: {{ . | quote }}
   {{- end }}
+  {{- with .shared }}
+  shared: {{ . | quote }}
+  {{- end }}
 allowVolumeExpansion: true
 # Local volumes: create the logical volume once the pod is scheduled, on that pod's node.
 volumeBindingMode: WaitForFirstConsumer

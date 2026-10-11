@@ -32,6 +32,7 @@ Working notes for agents. Read [README.md](README.md) first for the cluster spec
   - Namespaced resources set `metadata.namespace` explicitly: `{{ .Release.Namespace }}`, or a literal namespace for objects that live elsewhere (e.g. `kube-system`).
   - Keep resource names and selectors stable. Helm owns objects by name, and a Deployment's selector can't change in place.
   - PVCs carry `helm.sh/resource-policy: keep`, so uninstalling a release never deletes data.
+  - Data that can't be rebuilt goes under `backup` in the `app.yaml` or `component.yaml` (its PVCs, with `exclude` or `paths` to leave out caches and what's on the NAS already); `charts/backup` puts it on the NAS nightly and `scripts/restore.sh` brings it back. A database is always included. Don't write a backup CronJob into a chart.
   - PVCs that keep growing (metrics, logs, thumbnails, databases) use the StorageClass `lvm`, which caps them at their size; small ones use `local-path`. Set the class and size in the chart's `values.yaml`. A PVC's class can't change in place (README "Storage").
   - An `lvm` volume is a fresh ext4 filesystem with `lost+found` at its root. Apps that want an empty directory (Postgres's `PGDATA`) get a subdirectory of the mount.
 - `scripts/`: helpers the user runs by hand. Idempotent; read site values from the site directory's `site.yaml` (or take them as arguments that default to it); find the repo root and the site directory through `scripts/lib.sh`. A cluster command run through `sudo` passes `CAIRN_SITE=$SITE` along, since sudo drops the environment.
