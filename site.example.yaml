@@ -1,5 +1,19 @@
-# Example site.yaml: copy it to site.yaml (gitignored) and fill in, or run scripts/configure.py.
+# Example site.yaml: copy it to site.yaml in the site directory ($CAIRN_SITE, else the repo root,
+# where it's gitignored) and fill in, or run scripts/configure.py.
 # Placeholder values only. The real ones describe a home network and stay out of the public repo.
+
+# What scripts/apply.sh installs besides cert-manager, LVM LocalPV and charts/cluster. Turning one
+# off only stops managing it: helm uninstall removes it, and keeps its volumes.
+components:
+  # charts/home: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup.
+  home: true
+  # charts/immich: Immich, public.
+  immich: true
+  # kube-prometheus-stack, Loki and Alloy (helm/), charts/monitoring. Alerts go to Discord
+  # (site.secret.yaml: discord.webhookUrl).
+  monitoring: true
+  # CloudNativePG (helm/), and charts/postgres for each of postgres.clusters.
+  postgres: true
 
 # Let's Encrypt account email.
 acmeEmail: you@example.com
@@ -25,8 +39,9 @@ network:
   podGateway: 10.42.0.1
 
 nas:
-  # NFS export for the nightly backups. It must allow the node's IP.
+  # NFS server for the exports in this file. Each must allow the node's IP.
   server: 192.168.0.20
+  # Export for charts/home's nightly backups.
   path: /volume1/backup
 
 zigbee:

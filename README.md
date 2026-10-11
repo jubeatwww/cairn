@@ -18,8 +18,10 @@ Host-level setup (OS, networking, firewall, k3s install flags) is out of scope f
 ## Layout
 
 ```
-site.yaml           gitignored site settings: DNS zones, hostnames, IPs, NAS, Zigbee device, timezone; shape: site.example.yaml
-site.secret.yaml    gitignored secrets (the Gandi PAT); template: site.secret.example.yaml
+site.yaml           site settings: components, DNS zones, hostnames, IPs, NAS, Zigbee device, timezone;
+                    shape: site.example.yaml. In the site directory (below); gitignored here
+site.secret.yaml    secrets (the Gandi PAT, the Discord webhook), next to site.yaml; template: site.secret.example.yaml
+values/             optional per-release overrides of the chart defaults, next to site.yaml
 charts/cluster/     local chart: Let's Encrypt ClusterIssuers, Gandi DNS-01 credentials, Traefik settings,
                     the StorageClass lvm
 charts/home/        local chart: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup
@@ -32,9 +34,31 @@ scripts/            helpers you run by hand: configure, apply, Gandi and Discord
                     Grafana's password
 ```
 
-The local charts hold templates only. Every site-specific value comes from `site.yaml`; versions (image tags) live in each chart's `values.yaml`. `scripts/configure.py` writes `site.yaml` from questions, offering the current values or ones detected on the node, so you don't have to edit it by hand.
+The local charts hold templates only. Every site-specific value comes from `site.yaml`; versions (image tags), sizes and the like live in each chart's `values.yaml`. `scripts/configure.py` writes `site.yaml` from questions, offering the current values or ones detected on the node, so you don't have to edit it by hand.
 
-`site.yaml` describes the home network, so it stays out of this public repo like the secrets do. Keep a copy of `site.yaml` and `site.secret.yaml` somewhere safe (a password manager, the NAS): after losing the node, `scripts/configure.py` can rebuild `site.yaml`, but only from what you remember.
+### Site directory
+
+`site.yaml`, `site.secret.yaml` and `values/` make up the site directory: everything that turns this repo from a template into one particular cluster. It describes the home network, so it stays out of this public repo. Every script finds it through `$CAIRN_SITE`, or uses the repo root when that's unset (the three are gitignored there). Point `CAIRN_SITE` elsewhere, e.g. a private repo, to keep them out of this one entirely:
+
+```sh
+export CAIRN_SITE=~/cairn-site   # holds site.yaml, site.secret.yaml, values/
+scripts/configure.py             # writes $CAIRN_SITE/site.yaml
+scripts/apply.sh
+```
+
+To pin which version of this repo a site runs, add it to the private repo as a git submodule at a tag, and run `CAIRN_SITE=. cairn/scripts/apply.sh` from there. Think twice before committing `site.secret.yaml` in plaintext to a hosted repo, even a private one.
+
+- **`components`** in `site.yaml` turns each app on or off: `home`, `immich`, `monitoring`, `postgres`. cert-manager, LVM LocalPV and `charts/cluster` always go in, and the Gandi webhook whenever a zone uses the `gandi` solver. `scripts/configure.py` only asks what the components that are on need. Turning one off only stops `scripts/apply.sh` from managing it: `helm uninstall` removes it and keeps its volumes.
+- **`values/<release>.yaml`** overrides a release's chart defaults, for a local chart (`values/home.yaml` over `charts/home/values.yaml`) or a third-party one (`values/loki.yaml` over `helm/loki/values.yaml`). It goes last, after `site.yaml`, so it wins (maps merge, lists replace). The scripts and every `helm/*/install.sh` pick it up. A longer Prometheus retention, say, without touching this repo:
+  ```yaml
+  # values/kube-prometheus-stack.yaml
+  prometheus:
+    prometheusSpec:
+      retention: 30d
+  ```
+  `values/postgres.yaml` applies to every Postgres cluster; per-cluster settings stay in `postgres.clusters`.
+
+Keep a copy of the site directory somewhere safe (a private repo, a password manager, the NAS): after losing the node, `scripts/configure.py` can rebuild `site.yaml`, but only from what you remember.
 
 ## Apply
 
@@ -43,7 +67,7 @@ scripts/apply.sh --dry-run   # validate the local charts against the cluster, ch
 scripts/apply.sh             # install or upgrade everything
 ```
 
-It installs in dependency order: cert-manager and its Gandi webhook (their CRDs back the ClusterIssuers and Certificates), OpenEBS LVM LocalPV, then `charts/cluster` with `site.yaml` and `site.secret.yaml` (the ClusterIssuers, and the StorageClass `lvm` the monitoring volumes use). Then kube-prometheus-stack (ServiceMonitor CRDs), Loki, Alloy and CloudNativePG, then `charts/home`, `charts/immich` and `charts/monitoring` with `site.yaml`, and last `charts/postgres` once per cluster in `postgres.clusters`. A dry run skips the releases in `helm/`. For the kubeconfig it uses `$KUBECONFIG`, then `~/.kube/config`, then k3s's root-only `/etc/rancher/k3s/k3s.yaml` (run it with sudo).
+It installs in dependency order: cert-manager and, if a zone uses the `gandi` solver, its Gandi webhook (their CRDs back the ClusterIssuers and Certificates), OpenEBS LVM LocalPV, then `charts/cluster` (the ClusterIssuers, and the StorageClass `lvm` the other volumes use). Then what `components` turns on: kube-prometheus-stack (ServiceMonitor CRDs), Loki and Alloy for `monitoring`, CloudNativePG for `postgres`, then `charts/home`, `charts/immich` and `charts/monitoring`, and last `charts/postgres` once per cluster in `postgres.clusters`. Each local chart gets `site.yaml`, `site.secret.yaml` if it turns secrets into Secrets, then its override from `values/` ([Site directory](#site-directory)). A dry run skips the releases in `helm/`. For the kubeconfig it uses `$KUBECONFIG`, then `~/.kube/config`, then k3s's root-only `/etc/rancher/k3s/k3s.yaml` (run it with sudo, which drops `CAIRN_SITE`: `sudo env CAIRN_SITE="$CAIRN_SITE" scripts/apply.sh`).
 
 To upgrade an app, bump its image in `charts/home/values.yaml` and run `scripts/apply.sh`.
 
@@ -76,7 +100,7 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
    ```sh
    mkdir -p ~/.kube && sudo install -m 600 -o "$USER" -g "$USER" /etc/rancher/k3s/k3s.yaml ~/.kube/config
    ```
-4. Put back your saved `site.yaml`, or run `scripts/configure.py` to write it. Run it as well if the site changed (new IPs, NAS, Zigbee stick...).
+4. Put back your site directory (clone the private repo and set `CAIRN_SITE`, or copy the files into the repo root), or run `scripts/configure.py` to write `site.yaml`. Run it as well if the site changed (new IPs, NAS, Zigbee stick...).
 5. `scripts/setup-gandi-dns01.sh`: writes `site.secret.yaml` from a Gandi PAT, installs cert-manager and `charts/cluster`, and proves issuance with a staging certificate.
 6. `scripts/setup-discord-alerts.sh`: writes the Discord webhook for alerts to `site.secret.yaml` (see [Monitoring](#monitoring)). It installs kube-prometheus-stack too; Prometheus waits for its volume until `scripts/apply.sh` installs LVM LocalPV.
 7. `scripts/apply.sh`
@@ -191,6 +215,6 @@ When the volume group runs out, it needs more space from the host: a new disk ad
 
 Kubernetes Secrets are base64, not encryption. **Plaintext secrets are never committed.**
 
-- Secret values go in `site.secret.yaml`, which is gitignored (`*.secret.yaml`). `site.secret.example.yaml` next to it lists the keys with placeholder values.
+- Secret values go in `site.secret.yaml` in the site directory; in the repo root it's gitignored (`*.secret.yaml`). `site.secret.example.yaml` lists the keys with placeholder values.
 - The setup scripts write it through `scripts/secret.py`, which changes one key and keeps the others.
 - `scripts/apply.sh` passes it to `charts/cluster` (the Gandi PAT) and `charts/monitoring` (the Discord webhook), which turn it into Secrets. Helm also keeps a copy in each release record, a Secret in the release's namespace.

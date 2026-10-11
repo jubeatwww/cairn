@@ -4,7 +4,8 @@
     scripts/secret.py get <key>    print it (nothing if unset). Keys are dotted: gandi.pat
     scripts/secret.py set <key>    the value comes from stdin, so it never shows up in `ps`
 
-The file is created if missing and stays readable only by you (mode 600).
+The file is in the site directory: $CAIRN_SITE, else the repo root (scripts/lib.sh). It's created
+if missing and stays readable only by you (mode 600).
 """
 import os
 import pathlib
@@ -12,7 +13,8 @@ import sys
 
 import yaml
 
-FILE = pathlib.Path(__file__).resolve().parent.parent / "site.secret.yaml"
+SITE = pathlib.Path(os.environ.get("CAIRN_SITE") or pathlib.Path(__file__).resolve().parent.parent).resolve()
+FILE = SITE / "site.secret.yaml"
 HEADER = "# Gitignored. Never commit. Template: site.secret.example.yaml. Written by scripts/secret.py\n"
 
 

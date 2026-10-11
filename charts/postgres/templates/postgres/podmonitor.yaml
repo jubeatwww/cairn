@@ -1,5 +1,6 @@
+{{- if (required "components is required (site.yaml)" .Values.components).monitoring }}
 # Prometheus scrapes the instance's exporter (helm/kube-prometheus-stack picks up PodMonitors from
-# every namespace). Grafana has CloudNativePG's dashboard (helm/cloudnative-pg).
+# every namespace, and brings their CRD). Grafana has CloudNativePG's dashboard (helm/cloudnative-pg).
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
@@ -12,3 +13,4 @@ spec:
       cnpg.io/podRole: instance
   podMetricsEndpoints:
     - port: metrics
+{{- end }}

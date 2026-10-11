@@ -10,5 +10,7 @@ k3s.yaml
 # Python bytecode (scripts/configure.py)
 __pycache__/
 
-# Site settings describe the home network; the public repo only has site.example.yaml
+# Site settings describe the home network; the public repo only has site.example.yaml. With no
+# $CAIRN_SITE, the repo root is the site directory, per-release overrides (values/) included.
 site.yaml
+/values/

@@ -3,15 +3,15 @@
 #
 #   scripts/setup-gandi-dns01.sh [domain...]      default: site.yaml's acme.zones that use gandi
 #
-# Prompts for a Gandi Personal Access Token, checks it can manage every domain, writes it to the
-# gitignored site.secret.yaml, installs cert-manager, the Gandi webhook and charts/cluster, then
-# issues a staging cert for <domain> + *.<domain> and deletes it again.
+# Prompts for a Gandi Personal Access Token, checks it can manage every domain, writes it to
+# site.secret.yaml in the site directory (scripts/lib.sh), installs cert-manager, the Gandi webhook
+# and charts/cluster, then issues a staging cert for <domain> + *.<domain> and deletes it again.
 # Idempotent. Run as your normal user (site.secret.yaml must stay yours). Uses $KUBECONFIG, else
 # ~/.kube/config, else k3s's root-only kubeconfig through sudo.
 set -euo pipefail
+source "$(dirname "$0")/lib.sh"
 
-REPO=$(cd "$(dirname "$0")/.." && pwd)
-SECRET_FILE=$REPO/site.secret.yaml
+SECRET_FILE=$SITE/site.secret.yaml
 TEST_NS=default
 TEST_LABEL=cairn/dns01-test
 
@@ -25,11 +25,11 @@ if [[ -z ${KUBECONFIG:-} ]]; then
 fi
 # Root-only kubeconfig: run cluster commands through sudo.
 as=()
-[[ -r $KUBECONFIG ]] || as=(sudo env "KUBECONFIG=$KUBECONFIG")
+[[ -r $KUBECONFIG ]] || as=(sudo env "KUBECONFIG=$KUBECONFIG" "CAIRN_SITE=$SITE")
 k() { "${as[@]}" kubectl "$@"; }
 
 if (( $# == 0 )); then
-  gandi_zones=$(python3 -c 'import sys, yaml; z = (yaml.safe_load(open(sys.argv[1])).get("acme") or {}).get("zones") or {}; print(" ".join(k for k, v in z.items() if v == "gandi"))' "$REPO/site.yaml") ||
+  gandi_zones=$(python3 -c 'import sys, yaml; z = (yaml.safe_load(open(sys.argv[1])).get("acme") or {}).get("zones") or {}; print(" ".join(k for k, v in z.items() if v == "gandi"))' "$SITE/site.yaml") ||
     die "讀不到 site.yaml 的 acme.zones（需要 python3-yaml），或改成直接帶網域參數"
   [[ -n $gandi_zones ]] || die "site.yaml 的 acme.zones 裡沒有用 gandi 的 zone，請直接帶網域參數"
   # shellcheck disable=SC2086
@@ -82,8 +82,9 @@ step "安裝 cert-manager"
 step "安裝 cert-manager-webhook-gandi"
 "${as[@]}" "$REPO/helm/cert-manager-webhook-gandi/install.sh"
 step "安裝 charts/cluster（ClusterIssuer、Gandi Secret）"
+site_values cluster --secrets
 "${as[@]}" helm upgrade --install cluster "$REPO/charts/cluster" --namespace kube-system \
-  --values "$REPO/site.yaml" --values "$SECRET_FILE" --wait --timeout 5m > /dev/null
+  "${values[@]}" --wait --timeout 5m > /dev/null
 
 step "等待 webhook API 與 ClusterIssuer 就緒"
 k wait --for=condition=Available apiservice/v1alpha1.acme.bwolf.me --timeout=2m

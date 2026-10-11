@@ -5,11 +5,12 @@
 #
 # Stops both apps, unpacks that day's archives over their volumes, and starts them again
 # (a couple of minutes of downtime). Files the backup doesn't contain, such as HA's history
-# database, are left as they are. The NAS location comes from site.yaml. Needs the PVCs to exist,
-# so run scripts/apply.sh first on a fresh cluster.
+# database, are left as they are. The NAS location comes from site.yaml (scripts/lib.sh). Needs the
+# PVCs to exist, so run scripts/apply.sh first on a fresh cluster.
 # Uses $KUBECONFIG, else ~/.kube/config, else k3s's root-only kubeconfig (run with sudo).
 set -euo pipefail
-cd "$(dirname "$0")/.."
+source "$(dirname "$0")/lib.sh"
+cd "$REPO"
 
 day=${1:-}
 [[ $day =~ ^20[0-9]{2}-[0-9]{2}-[0-9]{2}$ ]] || { echo "usage: $0 <YYYY-MM-DD>" >&2; exit 1; }
@@ -19,10 +20,11 @@ if [[ -z ${KUBECONFIG:-} ]]; then
 fi
 k() { kubectl -n home "$@"; }
 
-[[ -f site.yaml ]] || { echo "site.yaml is missing: run scripts/configure.py (shape: site.example.yaml)" >&2; exit 1; }
+[[ -f $SITE/site.yaml ]] || { echo "$SITE/site.yaml is missing: run scripts/configure.py (shape: site.example.yaml)" >&2; exit 1; }
 
 job=restore-$(date +%s)
-manifest=$(helm template home charts/home --namespace home --values site.yaml \
+site_values home
+manifest=$(helm template home charts/home --namespace home "${values[@]}" \
   --set restore.date="$day" --set restore.job="$job" --show-only templates/backup/restore-job.yaml)
 
 echo "==> Stopping home-assistant and zigbee2mqtt"

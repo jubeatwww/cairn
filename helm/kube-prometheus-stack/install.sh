@@ -4,12 +4,17 @@
 # Helm only installs the chart's CRDs on the first install; after a version bump, apply the new
 # CRDs first (see the chart's upgrade notes).
 set -eu
+# values.yaml, then the site's override if any: values/kube-prometheus-stack.yaml in $CAIRN_SITE,
+# else the repo root (scripts/lib.sh).
+site=$(cd "${CAIRN_SITE:-$(dirname "$0")/../..}" && pwd)
 cd "$(dirname "$0")"
 export KUBECONFIG="${KUBECONFIG:-/etc/rancher/k3s/k3s.yaml}"
+set -- --values values.yaml
+[ ! -f "$site/values/kube-prometheus-stack.yaml" ] || set -- "$@" --values "$site/values/kube-prometheus-stack.yaml"
 
 helm upgrade --install kube-prometheus-stack kube-prometheus-stack \
   --repo https://prometheus-community.github.io/helm-charts \
   --version 91.9.0 \
   --namespace monitoring --create-namespace \
-  --values values.yaml \
+  "$@" \
   --wait --timeout 10m

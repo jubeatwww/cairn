@@ -1,5 +1,6 @@
 # Chart defaults: versions and the like. Site settings (domain, NAS, library path) come from
-# site.yaml at the repo root (scripts/apply.sh). Bump the images together, then run scripts/apply.sh.
+# site.yaml in the site directory, whose values/immich.yaml, if any, overrides these
+# (scripts/apply.sh). Bump the images together, then run scripts/apply.sh.
 images:
   server: ghcr.io/immich-app/immich-server:v3.2.4
   machineLearning: ghcr.io/immich-app/immich-machine-learning:v3.2.4

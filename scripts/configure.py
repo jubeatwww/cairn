@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Write site.yaml, the per-site settings the charts are rendered with, by answering questions.
 
-    scripts/configure.py [output]      default output: site.yaml at the repo root
+    scripts/configure.py [output]      default output: site.yaml in the site directory, $CAIRN_SITE
+                                       or else the repo root (scripts/lib.sh); created if missing
 
 Each question offers a default: the current site.yaml value, or one detected on this node
 (LAN IP and CIDR, timezone, Zigbee USB device, cni0 gateway, LVM volume group). Enter keeps it. Answers are
-validated, and the diff is shown before anything is written. Secrets are not asked here:
+validated, and the diff is shown before anything is written. Only the components turned on get their
+questions; a component turned off loses its section. Secrets are not asked here:
 scripts/setup-gandi-dns01.sh takes the Gandi PAT. Afterwards: scripts/apply.sh --dry-run.
 """
 import difflib
 import glob
 import ipaddress
+import os
 import pathlib
 import re
 import subprocess
@@ -19,7 +22,8 @@ import sys
 import yaml
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
-OUT = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else REPO / "site.yaml"
+SITE = pathlib.Path(os.environ.get("CAIRN_SITE") or REPO).resolve()
+OUT = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else SITE / "site.yaml"
 ADAPTERS = ("zstack", "ember", "deconz", "zigate", "zboss", "ezsp")
 K3S_NETS = ipaddress.ip_network("10.42.0.0/15")  # k3s pod and service networks
 
@@ -137,7 +141,30 @@ def ask(label, default, validate=None):
         return v
 
 
+def ask_yes(label, default):
+    while True:
+        try:
+            v = input(f"{label} [{'Y/n' if default else 'y/N'}]: ").strip().lower()
+        except EOFError:
+            v = ""
+            print()
+        if not v:
+            return default
+        if v in ("y", "yes", "n", "no"):
+            return v.startswith("y")
+        print("  請回答 y 或 n")
+        if not sys.stdin.isatty():
+            sys.exit(1)
+
+
 SOLVERS = ("gandi", "http01")  # names from charts/cluster/values.yaml, solvers
+# What scripts/apply.sh installs besides cert-manager, LVM LocalPV and charts/cluster (site.yaml: components).
+COMPONENTS = {
+    "home": "home（Mosquitto、Zigbee2MQTT、Home Assistant）",
+    "immich": "immich（Immich，公開）",
+    "monitoring": "monitoring（Prometheus、Grafana、Loki，告警送 Discord）",
+    "postgres": "postgres（CloudNativePG，每個 namespace 一個 Postgres）",
+}
 
 
 def valid_hostname(v):
@@ -177,7 +204,10 @@ def main():
     ip, lan = detect_lan()
 
     print(f"設定 {OUT}：直接按 Enter 採用 [ ] 裡的值。\n")
-    email = ask("Let's Encrypt 帳號 email", get("acmeEmail"), valid_email)
+    print("要裝的元件（cert-manager、LVM LocalPV 和 charts/cluster 一定會裝）：")
+    on = {n: ask_yes(f"  {label}", get("components", n) is not False) for n, label in COMPONENTS.items()}
+
+    email = ask("\nLet's Encrypt 帳號 email", get("acmeEmail"), valid_email)
     print("憑證的驗證方式：gandi = DNS-01（Gandi API，可簽 wildcard）；http01 = HTTP-01（主機名稱要已經指到這台 node）")
     gandi = ask("用 gandi 驗證的 DNS zone（逗號分隔）", ", ".join(z for z, v in zones.items() if v == "gandi"), valid_zones)
     default_solver = ask("其他 zone 的驗證方式", get("acme", "defaultSolver") or "http01", valid_solver)
@@ -193,44 +223,65 @@ def main():
     pod_cidr = ask("k3s pod 網段", get("network", "podCidr") or "10.42.0.0/16", valid_cidr)
     pod_gw = ask("cni0 在 pod 網段上的位址", detect_pod_gateway() or get("network", "podGateway"), valid_ip)
 
-    nas = ask("\nNAS（備份用 NFS）的 IP", get("nas", "server"), valid_ip)
-    exports = sh("showmount", "-e", nas).strip()
-    if exports:
-        print("  NAS 上的 export：\n    " + "\n    ".join(exports.splitlines()[1:]))
-    nas_path = ask("NFS export 路徑", get("nas", "path"), valid_abs_path)
+    if on["home"] or on["immich"] or on["postgres"]:
+        nas = ask("\nNAS（NFS）的 IP", get("nas", "server"), valid_ip)
+        exports = sh("showmount", "-e", nas).strip()
+        if exports:
+            print("  NAS 上的 export：\n    " + "\n    ".join(exports.splitlines()[1:]))
+    if on["home"]:
+        nas_path = ask("home 每日備份的 NFS export 路徑", get("nas", "path"), valid_abs_path)
 
-    devices = sorted(glob.glob("/dev/serial/by-id/*"))
-    print("\n這台機器上的 USB 序列裝置：" + ("\n  " + "\n  ".join(devices) if devices else "（沒有）"))
-    device = ask("Zigbee 協調器", get("zigbee", "device") or (devices[0] if len(devices) == 1 else None), valid_abs_path)
-    if not pathlib.Path(device).exists():
-        print(f"  注意：{device} 目前不存在（還沒插上？）")
-    adapter = ask("Zigbee adapter 類型", get("zigbee", "adapter") or "zstack", valid_adapter)
+        devices = sorted(glob.glob("/dev/serial/by-id/*"))
+        print("\n這台機器上的 USB 序列裝置：" + ("\n  " + "\n  ".join(devices) if devices else "（沒有）"))
+        device = ask("Zigbee 協調器", get("zigbee", "device") or (devices[0] if len(devices) == 1 else None), valid_abs_path)
+        if not pathlib.Path(device).exists():
+            print(f"  注意：{device} 目前不存在（還沒插上？）")
+        adapter = ask("Zigbee adapter 類型", get("zigbee", "adapter") or "zstack", valid_adapter)
 
     vgs = detect_volume_groups()
     print("\n這台機器上的 LVM volume group：" + ("、".join(vgs) if vgs else "（沒有）"))
     vg = ask("給限制大小的 volume 用的 volume group（StorageClass lvm）", get("lvm", "volumeGroup") or (vgs[0] if len(vgs) == 1 else None), valid_vg)
 
-    ha_host = ask("\nHome Assistant 的主機名稱（只限內網）", get("homeAssistant", "hostname") or old_host("homeAssistant", "ha"), valid_hostname)
-    immich_host = ask("Immich 的主機名稱（公開）", get("immich", "hostname") or old_host("immich", "immich"), valid_hostname)
-    library = ask(f"照片庫在 NAS（{nas}）上的 export 路徑", get("immich", "libraryPath"), valid_abs_path)
-    grafana_host = ask("Grafana 的主機名稱（只限內網）", get("grafana", "hostname") or "grafana." + ha_host.split(".", 1)[1], valid_hostname)
+    ha_host = immich_host = None
+    if on["home"]:
+        ha_host = ask("\nHome Assistant 的主機名稱（只限內網）", get("homeAssistant", "hostname") or old_host("homeAssistant", "ha"), valid_hostname)
+    if on["immich"]:
+        immich_host = ask("\nImmich 的主機名稱（公開）", get("immich", "hostname") or old_host("immich", "immich"), valid_hostname)
+        library = ask(f"照片庫在 NAS（{nas}）上的 export 路徑", get("immich", "libraryPath"), valid_abs_path)
+    if on["monitoring"]:
+        sibling = ha_host or immich_host
+        grafana_host = ask("\nGrafana 的主機名稱（只限內網）", get("grafana", "hostname") or (sibling and "grafana." + sibling.split(".", 1)[1]), valid_hostname)
 
-    pg_clusters = get("postgres", "clusters") or {}
-    print("\nPostgres：每個叢集放在同名的 namespace。個別設定（例如 size）在 site.yaml 裡改，這裡會保留。")
-    pg_names = ask("Postgres 叢集（逗號分隔）", ", ".join(pg_clusters), valid_namespaces)
-    pg_names = [n.strip() for n in pg_names.split(",") if n.strip()]
-    pg_backup = ask(f"Postgres 每日備份在 NAS（{nas}）上的 export 路徑", get("postgres", "backupPath"), valid_abs_path)
+    if on["postgres"]:
+        pg_clusters = get("postgres", "clusters") or {}
+        print("\nPostgres：每個叢集放在同名的 namespace。個別設定（例如 size）在 site.yaml 裡改，這裡會保留。")
+        pg_names = ask("Postgres 叢集（逗號分隔）", ", ".join(pg_clusters), valid_namespaces)
+        pg_names = [n.strip() for n in pg_names.split(",") if n.strip()]
+        pg_backup = ask(f"Postgres 每日備份在 NAS（{nas}）上的 export 路徑", get("postgres", "backupPath"), valid_abs_path)
 
     q = lambda v: yaml.safe_dump(v, default_flow_style=True).strip().removesuffix("\n...")  # noqa: E731
     zone_lines = "".join(f"    {q(z)}: gandi\n" for z in gandi_zones) or "    {}\n"
-    pg_lines = "".join(f"    {q(n)}: {q(pg_clusters.get(n) or {})}\n" for n in pg_names)
-    text = f"""\
+    blocks = [f"""\
 # Site-specific settings for this cluster: the "profile" the charts in charts/ are rendered with.
 # Moving to another machine, network or domain means editing this file, not the templates.
-# Gitignored, so the home network's layout stays out of the public repo: keep a copy somewhere safe.
+# It describes the home network, so it stays out of the public repo: gitignored there, or kept in
+# a private site directory ($CAIRN_SITE, see scripts/lib.sh). Keep a copy somewhere safe.
 # scripts/configure.py rewrites it from questions; site.example.yaml shows the shape.
-# Secrets go in site.secret.yaml (gitignored too; template: site.secret.example.yaml).
-
+# Secrets go in site.secret.yaml next to it (template: site.secret.example.yaml).
+""", f"""\
+# What scripts/apply.sh installs besides cert-manager, LVM LocalPV and charts/cluster. Turning one
+# off only stops managing it: helm uninstall removes it, and keeps its volumes.
+components:
+  # charts/home: Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup.
+  home: {q(on["home"])}
+  # charts/immich: Immich, public.
+  immich: {q(on["immich"])}
+  # kube-prometheus-stack, Loki and Alloy (helm/), charts/monitoring. Alerts go to Discord
+  # (site.secret.yaml: discord.webhookUrl).
+  monitoring: {q(on["monitoring"])}
+  # CloudNativePG (helm/), and charts/postgres for each of postgres.clusters.
+  postgres: {q(on["postgres"])}
+""", f"""\
 # Let's Encrypt account email.
 acmeEmail: {q(email)}
 # How cert-manager proves control of each DNS zone, by solver name (charts/cluster/values.yaml):
@@ -243,7 +294,7 @@ acme:
 timezone: {q(tz)}
 # The same zone in POSIX form, for images without tzdata (the backup job).
 timezonePosix: {q(tz_posix)}
-
+""", f"""\
 network:
   # Clients allowed through the lan-only middleware.
   lanCidr: {q(lan_cidr)}
@@ -252,50 +303,69 @@ network:
   # k3s defaults: the pod network, and cni0's address on it.
   podCidr: {q(pod_cidr)}
   podGateway: {q(pod_gw)}
-
+"""]
+    if on["home"] or on["immich"] or on["postgres"]:
+        blocks.append(f"""\
 nas:
-  # NFS export for the nightly backups. It must allow the node's IP.
+  # NFS server for the exports in this file. Each must allow the node's IP.
   server: {q(nas)}
+""" + (f"""\
+  # Export for charts/home's nightly backups.
   path: {q(nas_path)}
-
+""" if on["home"] else ""))
+    if on["home"]:
+        blocks.append(f"""\
 zigbee:
   # Coordinator on the node. by-id names follow the USB chip, not the port it's plugged into.
   device: {q(device)}
   # zstack for TI chips (CC2652, CC2530). Other chips: see Zigbee2MQTT's adapter docs.
   adapter: {q(adapter)}
-
+""")
+    blocks.append(f"""\
 lvm:
   # LVM volume group on the node for the size-capped volumes (StorageClass lvm). Its unallocated
   # space is all they can use. Ubuntu's installer names it ubuntu-vg.
   volumeGroup: {q(vg)}
-
+""")
+    if on["home"]:
+        blocks.append(f"""\
 homeAssistant:
   # LAN only: its DNS record points at network.nodeIp.
   hostname: {q(ha_host)}
-
+""")
+    if on["immich"]:
+        blocks.append(f"""\
 immich:
   # Public, so albums can be shared.
   hostname: {q(immich_host)}
   # NFS export on nas.server with the photo library, mounted as an external library.
   libraryPath: {q(library)}
-
+""")
+    if on["monitoring"]:
+        blocks.append(f"""\
 grafana:
   # LAN only: its DNS record points at network.nodeIp.
   hostname: {q(grafana_host)}
-
+""")
+    if on["postgres"]:
+        pg_lines = "".join(f"    {q(n)}: {q(pg_clusters.get(n) or {})}\n" for n in pg_names)
+        blocks.append(f"""\
 postgres:
   # One Postgres cluster per entry, in the namespace of that name (charts/postgres). Settings per
   # cluster override the chart's: size (e.g. 20Gi).
   clusters:
 {pg_lines}  # NFS export on nas.server for the nightly dumps, one directory per cluster.
   backupPath: {q(pg_backup)}
-"""
+""")
+    text = "\n".join(blocks)
+
     old = OUT.read_text() if OUT.exists() else ""
     if old == text:
         print(f"\n{OUT.name} 沒有變更。")
         return
     print("\n".join(difflib.unified_diff(old.splitlines(), text.splitlines(), "目前", "新的", lineterm="")))
     if input(f"\n寫入 {OUT}？[Y/n] ").strip().lower() in ("", "y", "yes"):
+        OUT.parent.mkdir(parents=True, exist_ok=True)
         OUT.write_text(text)
         print("已寫入。下一步：scripts/apply.sh --dry-run")
     else:

@@ -3,29 +3,28 @@
 #
 #   scripts/setup-discord-alerts.sh
 #
-# Prompts for a Discord webhook URL, checks it with Discord, writes it to the gitignored
-# site.secret.yaml, installs charts/monitoring (the Secret) and kube-prometheus-stack
+# Prompts for a Discord webhook URL, checks it with Discord, writes it to site.secret.yaml in the
+# site directory (scripts/lib.sh), installs charts/monitoring (the Secret) and kube-prometheus-stack
 # (Alertmanager's config), then sends a test alert to the channel.
 # Idempotent. Run as your normal user (site.secret.yaml must stay yours). Uses $KUBECONFIG, else
 # ~/.kube/config, else k3s's root-only kubeconfig through sudo.
 set -euo pipefail
+source "$(dirname "$0")/lib.sh"
 
-REPO=$(cd "$(dirname "$0")/.." && pwd)
-SECRET_FILE=$REPO/site.secret.yaml
 AM_API=/api/v1/namespaces/monitoring/services/kube-prometheus-stack-alertmanager:9093/proxy/api/v2
 
 step() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
 [[ $EUID -ne 0 ]] || die "請用一般使用者執行，不要加 sudo（否則 site.secret.yaml 會變成 root 的）"
-[[ -f $REPO/site.yaml ]] || die "沒有 site.yaml：先跑 scripts/configure.py"
+[[ -f $SITE/site.yaml ]] || die "$SITE 裡沒有 site.yaml：先跑 scripts/configure.py"
 
 if [[ -z ${KUBECONFIG:-} ]]; then
   if [[ -r $HOME/.kube/config ]]; then export KUBECONFIG=$HOME/.kube/config; else export KUBECONFIG=/etc/rancher/k3s/k3s.yaml; fi
 fi
 # Root-only kubeconfig: run cluster commands through sudo.
 as=()
-[[ -r $KUBECONFIG ]] || as=(sudo env "KUBECONFIG=$KUBECONFIG")
+[[ -r $KUBECONFIG ]] || as=(sudo env "KUBECONFIG=$KUBECONFIG" "CAIRN_SITE=$SITE")
 k() { "${as[@]}" kubectl "$@"; }
 
 # 1. Webhook URL: in Discord, channel settings > Integrations > Webhooks > New Webhook > Copy Webhook URL
@@ -58,8 +57,9 @@ printf '%s' "$url" | "$REPO/scripts/secret.py" set discord.webhookUrl
 # 4. The Secret first: Alertmanager's pod mounts it.
 ((${#as[@]} == 0)) || { step "sudo 驗證"; sudo -v; }
 step "安裝 charts/monitoring（webhook 的 Secret）"
+site_values monitoring --secrets
 "${as[@]}" helm upgrade --install monitoring "$REPO/charts/monitoring" --namespace monitoring --create-namespace \
-  --values "$REPO/site.yaml" --values "$SECRET_FILE" --wait --timeout 5m > /dev/null
+  "${values[@]}" --wait --timeout 5m > /dev/null
 step "安裝 kube-prometheus-stack（Alertmanager 設定）"
 "${as[@]}" "$REPO/helm/kube-prometheus-stack/install.sh" > /dev/null
 

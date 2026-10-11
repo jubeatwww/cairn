@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Install or upgrade everything in this repo, in dependency order, rendered with site.yaml.
+# Install or upgrade what site.yaml turns on, in dependency order, rendered with the files in the
+# site directory ($CAIRN_SITE, else the repo root; see scripts/lib.sh).
 #
 #   scripts/apply.sh             install/upgrade
 #   scripts/apply.sh --dry-run   validate the local charts against the cluster, change nothing
 #
-# cert-manager goes first: its CRDs back the ClusterIssuers and Certificates in the local charts.
-# Then LVM LocalPV and charts/cluster, whose StorageClass lvm the monitoring volumes need.
+# Always: cert-manager first (its CRDs back the ClusterIssuers and Certificates in the local
+# charts), its Gandi webhook if a zone uses the gandi solver, then LVM LocalPV and charts/cluster,
+# whose StorageClass lvm the other volumes need. Then each component in site.yaml's components.
 # Uses $KUBECONFIG, else ~/.kube/config, else k3s's root-only kubeconfig (run with sudo). Idempotent.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+source "$(dirname "$0")/lib.sh"
+cd "$REPO"
 
 if [[ -z ${KUBECONFIG:-} ]]; then
   if [[ -r $HOME/.kube/config ]]; then export KUBECONFIG=$HOME/.kube/config; else export KUBECONFIG=/etc/rancher/k3s/k3s.yaml; fi
@@ -21,11 +24,32 @@ case ${1:-} in
   *) echo "usage: $0 [--dry-run]" >&2; exit 1 ;;
 esac
 
-[[ -f site.yaml ]] || { echo "site.yaml is missing: run scripts/configure.py (shape: site.example.yaml)" >&2; exit 1; }
-[[ -f site.secret.yaml ]] || {
-  echo "site.secret.yaml is missing: run scripts/setup-gandi-dns01.sh and scripts/setup-discord-alerts.sh, or copy site.secret.example.yaml and fill it in" >&2
+[[ -f $SITE/site.yaml ]] || { echo "$SITE/site.yaml is missing: run scripts/configure.py (shape: site.example.yaml)" >&2; exit 1; }
+
+# What to install, one per line: the components site.yaml turns on, gandi if a zone uses that
+# solver, and pg:<namespace> for each Postgres cluster.
+plan=$(python3 - "$SITE/site.yaml" <<'EOF'
+import sys, yaml
+site = yaml.safe_load(open(sys.argv[1])) or {}
+names = ("home", "immich", "monitoring", "postgres")
+components = site.get("components") if isinstance(site.get("components"), dict) else {}
+missing = [n for n in names if not isinstance(components.get(n), bool)]
+if missing:
+    sys.exit("components." + ", components.".join(missing) + " must be true or false (site.yaml): run scripts/configure.py")
+print("\n".join(n for n in names if components[n]))
+acme = site.get("acme") or {}
+if "gandi" in [*(acme.get("zones") or {}).values(), acme.get("defaultSolver")]:
+    print("gandi")
+for ns in (site.get("postgres") or {}).get("clusters") or {}:
+    print("pg:" + ns)
+EOF
+)
+on() { grep -qx "$1" <<< "$plan"; }
+
+if { on gandi || on monitoring; } && [[ ! -f $SITE/site.secret.yaml ]]; then
+  echo "$SITE/site.secret.yaml is missing: run scripts/setup-gandi-dns01.sh and scripts/setup-discord-alerts.sh, or copy site.secret.example.yaml and fill it in" >&2
   exit 1
-}
+fi
 
 # A third-party release in helm/. Its install.sh has no dry-run mode, so a dry run skips it.
 release() {
@@ -37,42 +61,37 @@ release() {
   fi
 }
 
-release cert-manager
-release cert-manager-webhook-gandi
-release lvm-localpv
+# A local chart, rendered with site.yaml (and site.secret.yaml with --secrets), then the release's
+# override in the site directory (scripts/lib.sh).
+#   chart <release> <namespace> <timeout> [--secrets]
+chart() {
+  site_values "$1" "${4:-}"
+  echo "==> charts/$1 ($2)"
+  helm upgrade --install "$1" "charts/$1" --namespace "$2" --create-namespace \
+    "${values[@]}" --wait --timeout "$3" "${dry[@]}" > /dev/null
+}
 
-echo "==> charts/cluster"
-helm upgrade --install cluster charts/cluster --namespace kube-system \
-  --values site.yaml --values site.secret.yaml --wait --timeout 5m "${dry[@]}" > /dev/null
+echo "==> Site: $SITE"
+release cert-manager
+if on gandi; then release cert-manager-webhook-gandi; fi
+release lvm-localpv
+chart cluster kube-system 5m --secrets
 
 # Monitoring next: kube-prometheus-stack brings the ServiceMonitor/PodMonitor CRDs.
-release kube-prometheus-stack
-release loki
-release alloy
-release cloudnative-pg
+if on monitoring; then
+  release kube-prometheus-stack
+  release loki
+  release alloy
+fi
+if on postgres; then release cloudnative-pg; fi
 
-echo "==> charts/home"
-helm upgrade --install home charts/home --namespace home --create-namespace \
-  --values site.yaml --wait --timeout 10m "${dry[@]}" > /dev/null
-
-echo "==> charts/immich"
-helm upgrade --install immich charts/immich --namespace immich --create-namespace \
-  --values site.yaml --wait --timeout 15m "${dry[@]}" > /dev/null
-
-echo "==> charts/monitoring"
-helm upgrade --install monitoring charts/monitoring --namespace monitoring --create-namespace \
-  --values site.yaml --values site.secret.yaml --wait --timeout 5m "${dry[@]}" > /dev/null
+if on home; then chart home home 10m; fi
+if on immich; then chart immich immich 15m; fi
+if on monitoring; then chart monitoring monitoring 5m --secrets; fi
 
 # One release per Postgres cluster in site.yaml (postgres.clusters), in the namespace of its name.
-mapfile -t pg_clusters < <(python3 -c '
-import sys, yaml
-site = yaml.safe_load(open(sys.argv[1])) or {}
-for name in (site.get("postgres") or {}).get("clusters") or {}:
-    print(name)' site.yaml)
-for ns in "${pg_clusters[@]}"; do
-  echo "==> charts/postgres ($ns)"
-  helm upgrade --install postgres charts/postgres --namespace "$ns" --create-namespace \
-    --values site.yaml --wait --timeout 10m "${dry[@]}" > /dev/null
-done
+if on postgres; then
+  for ns in $(sed -n 's/^pg://p' <<< "$plan"); do chart postgres "$ns" 10m; done
+fi
 
 echo "==> Done${dry:+ (dry run, nothing changed)}"

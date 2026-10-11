@@ -1,5 +1,6 @@
-# Chart defaults. Site settings (grafana.hostname, network.lanCidr) come from site.yaml at the repo
-# root, the Discord webhook from site.secret.yaml (scripts/apply.sh).
+# Chart defaults. Site settings (grafana.hostname, network.lanCidr) come from site.yaml, the Discord
+# webhook from site.secret.yaml, both in the site directory (scripts/apply.sh). Its
+# values/monitoring.yaml, if any, overrides these.
 
 # ClusterIssuer for the Ingress certificate (charts/cluster, issuers).
 certIssuer: letsencrypt-prod

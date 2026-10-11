@@ -1,5 +1,6 @@
-# Cluster-wide defaults. Site settings (acme.zones, acmeEmail) come from site.yaml at the repo root,
-# secrets from site.secret.yaml (scripts/apply.sh).
+# Cluster-wide defaults. Site settings (acme.zones, acmeEmail) come from site.yaml, secrets from
+# site.secret.yaml, both in the site directory (scripts/apply.sh). Its values/cluster.yaml, if any,
+# overrides these.
 
 # One ClusterIssuer per entry, named by the key. Ingresses pick one with
 # cert-manager.io/cluster-issuer.

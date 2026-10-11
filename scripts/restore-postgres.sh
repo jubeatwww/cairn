@@ -5,10 +5,11 @@
 #
 # Replaces the database's contents with that day's dump, in one transaction. Stop the apps that
 # use it first: open connections hold locks that block the restore. Asks before changing anything.
-# The NAS location comes from site.yaml. On a fresh cluster, run scripts/apply.sh first.
+# The NAS location comes from site.yaml (scripts/lib.sh). On a fresh cluster, run scripts/apply.sh first.
 # Uses $KUBECONFIG, else ~/.kube/config, else k3s's root-only kubeconfig (run with sudo).
 set -euo pipefail
-cd "$(dirname "$0")/.."
+source "$(dirname "$0")/lib.sh"
+cd "$REPO"
 
 ns=${1:-} day=${2:-}
 [[ -n $ns && $day =~ ^20[0-9]{2}-[0-9]{2}-[0-9]{2}$ ]] || { echo "usage: $0 <namespace> <YYYY-MM-DD>" >&2; exit 1; }
@@ -18,10 +19,11 @@ if [[ -z ${KUBECONFIG:-} ]]; then
 fi
 k() { kubectl -n "$ns" "$@"; }
 
-[[ -f site.yaml ]] || { echo "site.yaml is missing: run scripts/configure.py (shape: site.example.yaml)" >&2; exit 1; }
+[[ -f $SITE/site.yaml ]] || { echo "$SITE/site.yaml is missing: run scripts/configure.py (shape: site.example.yaml)" >&2; exit 1; }
 
 job=postgres-restore-$(date +%s)
-manifest=$(helm template postgres charts/postgres --namespace "$ns" --values site.yaml \
+site_values postgres
+manifest=$(helm template postgres charts/postgres --namespace "$ns" "${values[@]}" \
   --set restore.date="$day" --set restore.job="$job" --show-only templates/backup/restore-job.yaml)
 
 echo "Open connections in $ns (stop these apps first):"
