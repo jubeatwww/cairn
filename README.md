@@ -29,6 +29,7 @@ apps/                  one directory per app
   home/                Mosquitto, Zigbee2MQTT, Home Assistant, nightly backup
   immich/              Immich, public, with the photo library on the NAS
 charts/                charts the components and apps share
+  app/                 the template for apps without a chart of their own
   postgres-cluster/    one app's Postgres cluster, with nightly dumps
 scripts/               helpers you run by hand: configure, Gandi and Discord setup, restore,
                        Grafana's password
@@ -76,20 +77,24 @@ Keep a copy of the site directory somewhere safe (a private repo, a password man
 
 ### Adding an app
 
-1. `apps/<app>/app.yaml`: its `description`, `timeout`, and under `site` the settings it reads from its entry in `site.yaml`, each with a comment, the question `scripts/configure.py` asks, an example for `site.example.yaml`, and a validator (fields: `apps/home/app.yaml`).
-2. `apps/<app>/chart/`: its chart. Templates read their settings from the root of `.Values` (`.Values.hostname`), and the shared ones from `site.yaml`'s sections (`.Values.network.lanCidr`).
+1. `apps/<app>/app.yaml`: its `description`, `timeout`, `database` if it needs one, and under `site` the settings it reads from its entry in `site.yaml`, each with a comment, the question `scripts/configure.py` asks, an example for `site.example.yaml`, and a validator (fields: `apps/home/app.yaml`).
+2. What it runs, either way:
+   - `apps/<app>/values.yaml` for the template `charts/app`: workloads (image, port, env, Ingress, volumes, the database's credentials...), documented in `charts/app/values.yaml`, example in `charts/app/examples/web.yaml`. Its hostnames are site settings: `hosts.<workload>` under `site` in `app.yaml`. Anything the template doesn't cover goes in `extraObjects`.
+   - `apps/<app>/chart/`: a chart of its own. Templates read their settings from the root of `.Values` (`.Values.hostname`), and the shared ones from `site.yaml`'s sections (`.Values.network.lanCidr`).
 3. `scripts/configure.py` to add its entry, then `scripts/configure.py --example` to update `site.example.yaml`.
 
-An app whose chart lives elsewhere needs nothing in `apps/`: its entry names the chart, pinned, and optional values files, which helmfile fetches. Its other keys go to the chart as values.
+An app whose definition lives elsewhere, e.g. in its own repo, needs nothing in `apps/`: its entry names a chart, or values files for `charts/app`, pinned, and helmfile fetches them (git over ssh uses your ssh keys; `helm registry login` for OCI registries). Its other keys go to the chart as values.
 
 ```yaml
 apps:
   shop:
     chart: oci://ghcr.io/<owner>/charts/shop      # or git::ssh://git@github.com/<owner>/<repo>.git@deploy/chart?ref=v1.2.0
     version: 1.2.0
-    values: [git::ssh://git@github.com/<owner>/<repo>.git@deploy/cairn.yaml?ref=v1.2.0]
     database: {}
     hostname: shop.example.com
+  blog:                                           # charts/app, with the definition from the app's repo
+    values: [git::ssh://git@github.com/<owner>/blog.git@deploy/cairn.yaml?ref=v2.0.1]
+    hosts: {web: blog.example.com}
 ```
 
 A component works the same way: `infrastructure/<name>/component.yaml` (fields: `infrastructure/base/component.yaml`), its key under `infrastructure` in `site.yaml`, and its own settings under `site` in `component.yaml`.
@@ -255,5 +260,6 @@ When the volume group runs out, it needs more space from the host: a new disk ad
 Kubernetes Secrets are base64, not encryption. **Plaintext secrets are never committed.**
 
 - Secret values go in `site.secret.yaml` in the site directory; in the repo root it's gitignored (`*.secret.yaml`). `site.secret.example.yaml` lists the keys with placeholder values.
+- Any value there can instead be a reference that helmfile resolves when it renders ([vals](https://github.com/helmfile/vals), built into helmfile): `ref+sops://secrets.enc.yaml#/gandi/pat` (a SOPS-encrypted file, key from `SOPS_AGE_KEY_FILE`), `ref+op://<vault>/<item>/<field>` (1Password), `ref+envsubst://$VAR`, and more. A plain value is used as it is. A file path in a reference is relative to where you run helmfile.
 - The setup scripts write it through `scripts/secret.py`, which changes one key and keeps the others.
-- helmfile passes it to the cluster chart (the Gandi PAT) and the monitoring chart (the Discord webhook), which turn it into Secrets. Helm also keeps a copy in each release record, a Secret in the release's namespace.
+- helmfile passes it to the cluster chart (the Gandi PAT) and the monitoring chart (the Discord webhook), and each app gets its own section, `apps.<name>` (merged over its entry; `charts/app` turns `secrets` into a Secret). The charts put secrets only in Secrets, which `helmfile diff` masks. Helm also keeps a copy in each release record, a Secret in the release's namespace.

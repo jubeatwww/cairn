@@ -32,6 +32,9 @@ environments:
 
 {{- $releases := list }}
 {{- $repos := dict }}
+{{- /* Read here only for the apps' sections, which each app gets on its own (apps.<name>). */}}
+{{- $secrets := dict }}
+{{- if isFile (printf "%s/site.secret.yaml" $site) }}{{ $secrets = readFile (printf "%s/site.secret.yaml" $site) | fromYaml | default dict }}{{ end }}
 
 {{- /* Components. A local chart gets site.yaml (and site.secret.yaml), a third-party one its
        <release>.yaml; both then get the site's values/<release>.yaml. */}}
@@ -59,9 +62,11 @@ environments:
 {{- end }}
 {{- end }}
 
-{{- /* Apps: the entry in site.yaml over apps/<app>/app.yaml. Release <name> in namespace <name>
-       gets site.yaml, the entry's values: files, then the entry itself (its site settings, and any
-       chart value to override). A database adds release postgres in the same namespace. */}}
+{{- /* Apps: the entry in site.yaml over apps/<app>/app.yaml. The chart: the entry's chart:, else
+       apps/<app>/chart/, else charts/app with apps/<app>/values.yaml (or the entry's values:).
+       Release <name> in namespace <name> gets site.yaml, those values files, the entry itself (its
+       site settings, and any chart value to override), then its section of site.secret.yaml.
+       A database adds release postgres in the same namespace. */}}
 {{- range $name, $entry := $apps }}
 {{- $entry = $entry | default dict }}
 {{- if not (kindIs "map" $entry) }}{{ fail (printf "apps.%s must be a map (site.yaml)" $name) }}{{ end }}
@@ -81,14 +86,22 @@ environments:
 {{- $needs = append $needs (printf "%s/postgres" $name) }}
 {{- end }}
 {{- $chart := get "chart" "" $spec }}
-{{- if and (not $chart) (isDir (printf "%s/chart" $dir)) }}{{ $chart = printf "./%s/chart" $dir }}{{ end }}
+{{- $values := list (printf "%s/site.yaml" $site) }}
+{{- if not $chart }}
+{{- if isDir (printf "%s/chart" $dir) }}{{ $chart = printf "./%s/chart" $dir }}
+{{- else if isFile (printf "%s/values.yaml" $dir) }}{{ $chart = "./charts/app" }}{{ $values = append $values (printf "./%s/values.yaml" $dir) }}
+{{- else if hasKey $spec "values" }}{{ $chart = "./charts/app" }}{{ end }}
+{{- end }}
 {{- if $chart }}
 {{- if and (or (hasPrefix "oci://" $chart) (contains "::" $chart)) (not (hasKey $spec "version")) (not (contains "ref=" $chart)) }}
 {{- fail (printf "apps.%s.chart (site.yaml): pin it, with version: or ?ref= in a git URL" $name) }}
 {{- end }}
-{{- $values := list (printf "%s/site.yaml" $site) }}
-{{- range $v := get "values" list $spec }}{{ $values = append $values $v }}{{ end }}
+{{- range $v := get "values" list $spec }}
+{{- if and (contains "::" $v) (not (contains "ref=" $v)) }}{{ fail (printf "apps.%s.values (site.yaml): pin %s with ?ref=" $name $v) }}{{ end }}
+{{- $values = append $values $v }}
+{{- end }}
 {{- $values = append $values (omit $entry "app" "chart" "version" "values" "timeout" "needs") }}
+{{- with get (printf "apps.%s" $name) dict $secrets }}{{ $values = append $values . }}{{ end }}
 {{- $rel := dict "name" $name "namespace" $name "chart" $chart "labels" (dict "app" $name) "needs" (concat $needs (get "needs" list $spec)) "values" $values }}
 {{- if hasKey $spec "version" }}{{ $_ := set $rel "version" $spec.version }}{{ end }}
 {{- if hasKey $spec "timeout" }}{{ $_ := set $rel "timeout" $spec.timeout }}{{ end }}

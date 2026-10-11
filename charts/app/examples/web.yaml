@@ -1,0 +1,47 @@
+# An app built on charts/app, as apps/<app>/values.yaml would define it, plus what its entry in
+# site.yaml and site.secret.yaml would add (hosts, secrets). scripts/hooks/pre-commit renders the
+# chart with it.
+workloads:
+  web:
+    image: ghcr.io/example/notes-web:1.4.2
+    port: 8080
+    replicas: 2
+    env:
+      LOG_LEVEL: info
+    secretEnv:
+      SESSION_KEY: sessionKey
+    database: true
+    ingress: {}
+    probe:
+      path: /healthz
+  admin:
+    image: ghcr.io/example/notes-admin:1.4.2
+    port: 3000
+    database: true
+    ingress:
+      lanOnly: true
+    volumes:
+      uploads:
+        mountPath: /var/lib/notes/uploads
+        size: 5Gi
+        storageClass: lvm
+  worker:
+    image: ghcr.io/example/notes-web:1.4.2
+    args: [worker]
+    database: true
+    resources:
+      limits:
+        memory: 256Mi
+hosts:
+  web: notes.example.com
+  admin: notes-admin.example.com
+secrets:
+  sessionKey: "<random>"
+extraObjects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: notes-settings
+      namespace: "{{ .Release.Namespace }}"
+    data:
+      timezone: "{{ .Values.timezone }}"

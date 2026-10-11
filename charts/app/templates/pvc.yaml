@@ -1,0 +1,20 @@
+{{- range $name, $w := .Values.workloads }}
+{{- range $v, $spec := $w.volumes }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}-{{ $v }}
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    # Keep the data even if the release is uninstalled.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ $spec.storageClass | default "local-path" }}
+  resources:
+    requests:
+      storage: {{ required (printf "workloads.%s.volumes.%s.size is required" $name $v) $spec.size }}
+{{- end }}
+{{- end }}

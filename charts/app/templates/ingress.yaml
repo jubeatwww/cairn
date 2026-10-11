@@ -1,0 +1,36 @@
+{{- range $name, $w := .Values.workloads }}
+{{- if and $w.port (kindIs "map" $w.ingress) }}
+{{- $host := include "app.host" (dict "root" $ "name" $name) }}
+---
+{{- if $w.ingress.lanOnly }}
+# LAN-only: {{ $host }} resolves to the node's LAN IP, and lan-only blocks anything else.
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ $.Values.certIssuer }}
+    {{- if $w.ingress.lanOnly }}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ $.Release.Namespace }}-lan-only@kubernetescrd
+    {{- end }}
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - {{ $host }}
+      secretName: {{ $name }}-tls
+  rules:
+    - host: {{ $host }}
+      http:
+        paths:
+          - path: {{ $w.ingress.path | default "/" }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $name }}
+                port:
+                  name: http
+{{- end }}
+{{- end }}

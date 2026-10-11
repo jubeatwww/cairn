@@ -1,0 +1,17 @@
+{{- range $name, $w := .Values.workloads }}
+{{- if $w.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  selector:
+    {{- include "app.selector" (dict "root" $ "name" $name) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $w.port }}
+      targetPort: http
+{{- end }}
+{{- end }}

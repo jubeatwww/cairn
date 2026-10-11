@@ -1,0 +1,36 @@
+# The template for apps that don't need a chart of their own. An app's definition fills it in
+# (apps/<app>/values.yaml, or values files from elsewhere), and its entry in site.yaml adds the site
+# settings (hosts) and can override anything here. Example: examples/web.yaml.
+
+# ClusterIssuer for the Ingress certificates (infrastructure/base/chart, issuers).
+certIssuer: letsencrypt-prod
+
+# One Deployment and one Service per workload, both named after it:
+#   image       required
+#   port        the container port, served by the Service on the same port. Without it, no Service
+#               or Ingress (a worker).
+#   replicas    default 1. A workload with volumes is replaced, not rolled: its volumes are
+#               ReadWriteOnce.
+#   command, args
+#   env         {NAME: value}
+#   secretEnv   {NAME: key}: from the Secret <release>-secrets (secrets below)
+#   database    true: DATABASE_URL and PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD from the app's
+#               Postgres cluster (database: in its entry in site.yaml)
+#   ingress     {}: an Ingress for hosts.<workload>, on path / unless path: is set. lanOnly: true
+#               lets in only network.lanCidr (README "LAN-only services").
+#   volumes     {name: {mountPath, size, storageClass}}: a PVC <workload>-<name> each, kept when the
+#               release is uninstalled. storageClass: lvm for data that keeps growing, else
+#               local-path (the default).
+#   probe       {path: /healthz}: HTTP readiness check on the port. Default: TCP on the port.
+#   resources   the container's requests and limits
+workloads: {}
+
+# Hostname per workload with an ingress: site settings, set in the app's entry in site.yaml.
+hosts: {}
+
+# Secret values, from the app's entry under apps in site.secret.yaml (a value or a ref+ reference),
+# into the Secret <release>-secrets: {key: value}.
+secrets: {}
+
+# More manifests, as YAML maps or strings, rendered with tpl: for what the workloads don't cover.
+extraObjects: []

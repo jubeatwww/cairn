@@ -1,0 +1,90 @@
+{{- range $name, $w := .Values.workloads }}
+{{- $ctx := dict "root" $ "name" $name }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  replicas: {{ $w.replicas | default 1 }}
+  {{- if $w.volumes }}
+  # Its volumes are ReadWriteOnce: the old pod lets go of them before the new one starts.
+  strategy:
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "app.selector" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "app.selector" $ctx | nindent 8 }}
+    spec:
+      containers:
+        - name: {{ $name }}
+          image: {{ required (printf "workloads.%s.image is required" $name) $w.image }}
+          {{- with $w.command }}
+          command: {{ toJson . }}
+          {{- end }}
+          {{- with $w.args }}
+          args: {{ toJson . }}
+          {{- end }}
+          {{- if or $w.env $w.secretEnv $w.database }}
+          env:
+            {{- range $k, $v := $w.env }}
+            - name: {{ $k }}
+              value: {{ $v | toString | quote }}
+            {{- end }}
+            {{- range $k, $key := $w.secretEnv }}
+            - name: {{ $k }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "app.secretName" $ }}
+                  key: {{ $key }}
+            {{- end }}
+            {{- if $w.database }}
+            # The app's Postgres cluster (charts/postgres-cluster): CloudNativePG's generated credentials.
+            {{- range $var, $key := dict "DATABASE_URL" "uri" "PGHOST" "host" "PGPORT" "port" "PGDATABASE" "dbname" "PGUSER" "username" "PGPASSWORD" "password" }}
+            - name: {{ $var }}
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-app
+                  key: {{ $key }}
+            {{- end }}
+            {{- end }}
+          {{- end }}
+          {{- with $w.port }}
+          ports:
+            - name: http
+              containerPort: {{ . }}
+          readinessProbe:
+            {{- if ($w.probe | default dict).path }}
+            httpGet:
+              path: {{ $w.probe.path }}
+              port: http
+            {{- else }}
+            tcpSocket:
+              port: http
+            {{- end }}
+          {{- end }}
+          {{- with $w.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $w.volumes }}
+          volumeMounts:
+            {{- range $v, $spec := . }}
+            - name: {{ $v }}
+              mountPath: {{ required (printf "workloads.%s.volumes.%s.mountPath is required" $name $v) $spec.mountPath }}
+            {{- end }}
+          {{- end }}
+      {{- with $w.volumes }}
+      volumes:
+        {{- range $v, $_ := . }}
+        - name: {{ $v }}
+          persistentVolumeClaim:
+            claimName: {{ $name }}-{{ $v }}
+        {{- end }}
+      {{- end }}
+{{- end }}
