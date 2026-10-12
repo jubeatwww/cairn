@@ -127,7 +127,7 @@ What it runs is either `apps/<app>/values.yaml` for the template `charts/app` (w
 | `values` | values files for its chart or for `charts/app`: from elsewhere (`git::...?ref=<tag>`, or absolute paths), or relative to the app's directory |
 | anything else | its settings, at the root of its chart's values (`hostname`, `hosts`, and any chart default to override) |
 
-An app defined in its own repo needs nothing in `apps/`. Either its repo is shaped like `apps/<app>/` (`app.yaml`, `chart/`, a values file per environment), a plugin: clone it into `plugins/` in the site directory and name the clone with `app:`. Its entry picks the branch's values file, and `git pull` there updates it. Or helmfile fetches what its entry names (git over ssh uses your ssh keys; `helm registry login` for OCI registries).
+An app defined in its own repo needs nothing in `apps/`. Either its repo is shaped like `apps/<app>/` (`app.yaml`, `chart/`, a values file per environment), a plugin: clone it into `plugins/` in the site directory and name the clone with `app:`. Its entry picks the branch's values file, and `git pull` there updates it. If only a directory of the repo is shaped like that (`deploy/`, next to the app's source), clone just that directory and name it by its path: `git clone --filter=blob:none --sparse <url> plugins/<dir>`, `git -C plugins/<dir> sparse-checkout set deploy`, `app: <dir>/deploy`. Or helmfile fetches what its entry names (git over ssh uses your ssh keys; `helm registry login` for OCI registries).
 
 ```yaml
 apps:
