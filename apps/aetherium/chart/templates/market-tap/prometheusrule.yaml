@@ -1,0 +1,42 @@
+{{- if (.Values.infrastructure | default dict).monitoring }}
+# Alerts go to Discord with the rest (infrastructure/monitoring). A day missed is a day of quotes
+# lost for good, hence a critical one for a silent collection.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: amt
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: amt
+      rules:
+        # A task run recorded as failed: a collection error, an upload that doesn't match, a stale
+        # replay, an audit finding duplicates...
+        - alert: AmtTaskFailed
+          expr: increase(amt_task_runs_total{status="failed"}[1h]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "amt task {{`{{ $labels.task }}`}} failed"
+            description: "kubectl -n {{ .Release.Namespace }} logs deploy/amt-server, and amt.task_runs in Postgres."
+        # Collecting, but nothing flushed for 10 minutes: the subscription died silently. Only while
+        # a collection runs, so holidays stay quiet.
+        - alert: AmtOrderbookSilent
+          expr: >-
+            (sum(rate(amt_ob_rows_flushed_total[10m])) == 0 or absent(amt_ob_rows_flushed_total))
+            and on() (amt_ob_collection_active == 1)
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "orderbook collection is live but silent"
+            description: "The WebSocket session is likely dead or the feed stalled; quotes are being lost."
+        # The server is down, or its metrics endpoint is.
+        - alert: AmtMetricsAbsent
+          expr: absent(up{job="amt-server-metrics"}) or up{job="amt-server-metrics"} == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "amt-server's metrics are unreachable"
+{{- end }}

@@ -1,0 +1,27 @@
+# Installed by apps.aetherium in site.yaml; its chart is chart/. Fields: README "Components and apps".
+description: Aetherium's market-tap, collecting Taiwan stock and futures quotes into ClickHouse
+# Postgres: market-tap's task log (schema amt). ClickHouse: the quotes. Both in its namespace, in its
+# nightly backup. Its volume isn't: it only holds a day's quotes until they're uploaded.
+database: {}
+clickhouse: {}
+# The ClickHouse schema Job waits for a fresh server.
+timeout: 600
+site:
+  archivePath:
+    comment: NFS export on nas.server for market-tap's monthly archive (Parquet, the ClickHouse partitions older than a year), mounted read-write.
+    ask: market-tap 月封存（Parquet）在 NAS 上的 export 路徑
+    example: /volume1/archive
+    check: absPath
+secrets:
+  ghcr.token:
+    comment: Pulls the private images from ghcr.io. A classic PAT with read:packages only.
+    ask: ghcr.io 的 token（classic PAT，只勾 read:packages）
+  sinotrade.id:
+    comment: The SinoTrade account market-tap's login Job signs in with every trading morning.
+    ask: SinoTrade 登入帳號
+  sinotrade.password:
+    comment: Its password.
+    ask: SinoTrade 登入密碼
+  twcaLocalStorage:
+    comment: "The TWCA certificate the login Job presents: the JSON market-tap's export-twca writes (twca-local-storage.json), private key included. From the file: scripts/secret.py set apps.<name>.twcaLocalStorage < twca-local-storage.json"
+    ask: twca-local-storage.json 的內容（多行的話改用 scripts/secret.py set apps.<name>.twcaLocalStorage < 檔案）

@@ -1,0 +1,10 @@
+# files/replay_segments.py, a copy of market-tap's scripts/replay_segments.py: copy it again when
+# that one changes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: replay-segments
+  namespace: {{ .Release.Namespace }}
+data:
+  replay_segments.py: |
+    {{- .Files.Get "files/replay_segments.py" | nindent 4 }}

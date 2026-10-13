@@ -1,0 +1,51 @@
+# Every morning, after kbar-tick-agg: amt.replay_segments in Postgres, the futures sessions complete
+# enough to replay, computed from ClickHouse. While the table is empty it fills in every session
+# since the start; afterwards only the last three days.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: replay-segments
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.schedules.replaySegments | quote }}
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: segments
+              image: {{ .Values.images.python }}
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+                  pip install --quiet --no-cache-dir --root-user-action=ignore clickhouse-connect==1.9.0 "psycopg[binary]==3.3.6"
+                  exec python /app/replay_segments.py
+              env:
+                {{- include "aetherium.databaseEnv" . | nindent 16 }}
+                {{- range $var, $key := dict "CLICKHOUSE_HOST" "host" "CLICKHOUSE_PORT" "port" "CLICKHOUSE_DB" "database" "CLICKHOUSE_USER" "username" "CLICKHOUSE_PASSWORD" "password" }}
+                - name: {{ $var }}
+                  valueFrom:
+                    secretKeyRef:
+                      name: clickhouse-app
+                      key: {{ $key }}
+                {{- end }}
+                # The script takes the server as one DSN.
+                - name: CH_URL
+                  value: http://$(CLICKHOUSE_USER):$(CLICKHOUSE_PASSWORD)@$(CLICKHOUSE_HOST):$(CLICKHOUSE_PORT)/$(CLICKHOUSE_DB)
+              resources:
+                {{- toYaml .Values.resources.replaySegments | nindent 16 }}
+              volumeMounts:
+                - name: script
+                  mountPath: /app
+          volumes:
+            - name: script
+              configMap:
+                name: replay-segments

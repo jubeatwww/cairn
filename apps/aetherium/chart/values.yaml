@@ -1,0 +1,72 @@
+# Defaults for aetherium. Its settings (archivePath) come from apps.aetherium in site.yaml, and its
+# secrets (ghcr.token, sinotrade, twcaLocalStorage) from its section of site.secret.yaml; either can
+# override these too (README "Components and apps").
+images:
+  # market-tap's two images, built from its repo and pushed by hand (both moving tags, pulled again
+  # on every start): amt runs the server, amt-login the Job the server starts every trading morning
+  # to sign in (node and Chromium).
+  amt: ghcr.io/jubeatwww/amt:latest
+  amtLogin: ghcr.io/jubeatwww/amt-login:latest
+  # The ClickHouse schema and kbar-tick-agg send SQL over HTTP.
+  curl: curlimages/curl:8.22.0
+  # replay-segments; its packages are pinned in its CronJob.
+  python: python:3.11.16-slim-trixie
+imagePullPolicy: Always
+
+# Pulls the private images (Secret ghcr-pull). token: site.secret.yaml.
+ghcr:
+  username: jubeatwww
+  token: ""
+
+# The server's working directory: each day's quotes as they're collected, until they're uploaded
+# to ClickHouse. Only uploads that keep failing make it grow; lvm caps it.
+storage:
+  data:
+    size: 10Gi
+    storageClass: lvm
+
+resources:
+  server:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+  replaySegments:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+# The two CronJobs, in UTC: Taiwan is UTC+8, with no daylight saving time.
+schedules:
+  # 06:40 Taiwan time, after the 06:00 upload of the night session: the last three days of
+  # tick_futures, aggregated again into kbar_1m.
+  kbarTickAgg: "40 22 * * *"
+  # 06:50 Taiwan time, after kbar-tick-agg: amt.replay_segments, the replayable sessions.
+  replaySegments: "50 22 * * *"
+
+# ConfigMap amt-trading-calendar's first content: the weekdays the market is closed (holidays, make-up
+# days, settlement-only days), from TWSE's schedule (openapi.twse.com.tw/v1/holidaySchedule/
+# holidaySchedule). It's written once, then edited in the cluster: a typhoon day is decided that
+# morning, next year's list in December (README "Aetherium").
+holidays:
+  - "2026-01-01"
+  - "2026-02-12"
+  - "2026-02-13"
+  - "2026-02-16"
+  - "2026-02-17"
+  - "2026-02-18"
+  - "2026-02-19"
+  - "2026-02-20"
+  - "2026-02-27"
+  - "2026-04-03"
+  - "2026-04-06"
+  - "2026-05-01"
+  - "2026-06-19"
+  - "2026-09-25"
+  - "2026-09-28"
+  - "2026-10-09"
+  - "2026-10-26"
+  - "2026-12-25"

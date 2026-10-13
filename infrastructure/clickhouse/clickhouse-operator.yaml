@@ -1,0 +1,27 @@
+# https://github.com/Altinity/clickhouse-operator/tree/master/deploy/helm/clickhouse-operator
+# The Altinity operator, watching every namespace. Each app's server is a ClickHouseInstallation
+# from charts/clickhouse. Its CRDs install and upgrade with the chart (a pre-install/pre-upgrade
+# hook), unlike most charts'.
+#
+# The operator signs in to every server as clickhouse_operator, the chart's default credentials
+# (secret.username, secret.password). Each server accepts that user only from the operator's pod IP.
+
+# Regexps. Left empty, it watches only its own namespace.
+watchNamespaces: [".*"]
+
+operator:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+# Its exporter, which turns each server's system tables into Prometheus metrics on port 8888.
+metrics:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 256Mi

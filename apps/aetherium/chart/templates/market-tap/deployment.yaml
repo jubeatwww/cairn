@@ -1,0 +1,64 @@
+# amt server: one process that schedules everything by itself, in Taiwan time on trading days (the
+# calendar's holidays left out): the morning login (a Job, from images.amtLogin), stock and futures
+# quotes over the day and night sessions, their uploads to ClickHouse, the monthly archive and
+# dedup audit. Recreate and one replica: only one process may hold /data. The grace period lets a
+# running collection flush before it stops.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amt-server
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: amt-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: amt-server
+    spec:
+      serviceAccountName: amt-server
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: amt
+          image: {{ .Values.images.amt }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          args: [server]
+          workingDir: /data
+          env:
+            {{- include "aetherium.databaseEnv" . | nindent 12 }}
+            {{- include "aetherium.clickhouseEnv" . | nindent 12 }}
+            - name: AMT_HOLIDAYS_FILE
+              value: /etc/amt/holidays.txt
+            - name: AMT_ARCHIVE_DIR
+              value: /archive
+            - name: AMT_LOGIN_IMAGE
+              value: {{ .Values.images.amtLogin }}
+          ports:
+            - name: metrics
+              containerPort: 9090
+          resources:
+            {{- toYaml .Values.resources.server | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: calendar
+              mountPath: /etc/amt
+              readOnly: true
+            # <table>/<YYYY-MM>.parquet for the months it archives, then drops from ClickHouse.
+            - name: archive
+              mountPath: /archive
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: amt-data
+        - name: calendar
+          configMap:
+            name: amt-trading-calendar
+        - name: archive
+          nfs:
+            server: {{ required "nas.server is required (site.yaml)" .Values.nas.server }}
+            path: {{ required (printf "apps.%s.archivePath is required (site.yaml)" .Release.Name) .Values.archivePath }}

@@ -1,0 +1,42 @@
+# After every install and upgrade: creates what's missing of the schema (CREATE TABLE IF NOT EXISTS)
+# and redefines the views (CREATE OR REPLACE VIEW). A table that exists is left as it is: changing
+# one is a manual ALTER. On a fresh install it first waits for the server to start and create its
+# database.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: clickhouse-schema
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 540
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: schema
+          image: {{ .Values.images.curl }}
+          env:
+            {{- include "aetherium.clickhouseEnv" . | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              {{- include "aetherium.curlAuth" . | nindent 14 }}
+              q() { curl -sS --fail-with-body -K /tmp/curlrc "$CLICKHOUSE_URL/?database=$CLICKHOUSE_DB" --data-binary "$1"; }
+              until q 'SELECT 1' > /dev/null 2>&1; do sleep 5; done
+              for f in /schema/*.sql; do
+                echo "$f"
+                q "@$f"
+              done
+          volumeMounts:
+            - name: schema
+              mountPath: /schema
+      volumes:
+        - name: schema
+          configMap:
+            name: clickhouse-schema

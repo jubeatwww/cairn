@@ -1,0 +1,5 @@
+apiVersion: v2
+name: aetherium
+description: Aetherium's market-tap, collecting Taiwan stock and futures quotes into ClickHouse.
+type: application
+version: 0.1.0

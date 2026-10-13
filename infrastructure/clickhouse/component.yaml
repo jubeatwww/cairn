@@ -1,0 +1,11 @@
+# On with infrastructure.clickhouse in site.yaml. Each app with clickhouse gets its own server from
+# charts/clickhouse. Fields: README "Components and apps".
+description: Altinity's ClickHouse operator, for the apps' ClickHouse servers
+repositories:
+  altinity: https://helm.altinity.com
+releases:
+  - name: clickhouse-operator
+    namespace: clickhouse-system
+    chart: altinity/altinity-clickhouse-operator
+    version: 0.27.4
+    needs: [kube-system/cluster]

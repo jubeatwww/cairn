@@ -1,0 +1,90 @@
+# One server: a single node has nowhere to put a replica, so there's no Keeper either.
+apiVersion: clickhouse.altinity.com/v1
+kind: ClickHouseInstallation
+metadata:
+  name: clickhouse
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    # Uninstalling the release leaves the server running; its volume outlives it anyway (Retain).
+    helm.sh/resource-policy: keep
+spec:
+  defaults:
+    templates:
+      podTemplate: clickhouse
+      dataVolumeClaimTemplate: data
+      serviceTemplate: clickhouse
+  configuration:
+    users:
+      {{ .Values.user }}/password:
+        valueFrom:
+          secretKeyRef:
+            name: clickhouse-app
+            key: password
+      # From any address: the NetworkPolicy decides which pods reach the server at all.
+      {{ .Values.user }}/networks/ip: "::/0"
+    {{- if .Values.backupName }}
+    files:
+      # BACKUP and RESTORE read and write only under the NAS mount (charts/backup).
+      config.d/backups.xml: |
+        <clickhouse>
+          <backups>
+            <allowed_path>/backups/</allowed_path>
+          </backups>
+        </clickhouse>
+    {{- end }}
+    clusters:
+      - name: main
+        layout:
+          shardsCount: 1
+          replicasCount: 1
+  templates:
+    podTemplates:
+      - name: clickhouse
+        spec:
+          containers:
+            - name: clickhouse
+              image: {{ .Values.image }}
+              env:
+                # The image's entrypoint creates it on the first start.
+                - name: CLICKHOUSE_DB
+                  value: {{ .Values.database }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              {{- with .Values.backupName }}
+              volumeMounts:
+                # This app's directory of the backup export, <backup.path>/<app>/. Kubelet creates it
+                # if it's missing.
+                - name: backups
+                  mountPath: /backups
+                  subPath: {{ . }}
+              {{- end }}
+          {{- if .Values.backupName }}
+          volumes:
+            - name: backups
+              nfs:
+                server: {{ required "nas.server is required (site.yaml)" (.Values.nas | default dict).server }}
+                path: {{ required "backup.path is required (site.yaml)" (.Values.backup | default dict).path }}
+          {{- end }}
+    volumeClaimTemplates:
+      - name: data
+        # Deleting the installation leaves the volume (and its data) in place.
+        reclaimPolicy: Retain
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          storageClassName: {{ .Values.storage.storageClass }}
+          resources:
+            requests:
+              storage: {{ .Values.storage.size }}
+    serviceTemplates:
+      # Service clickhouse, for the apps in the namespace. ClusterIP: the operator's default is a
+      # LoadBalancer, which would publish the ports on the node.
+      - name: clickhouse
+        generateName: clickhouse
+        spec:
+          type: ClusterIP
+          ports:
+            - name: http
+              port: 8123
+            - name: tcp
+              port: 9000

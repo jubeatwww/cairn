@@ -7,6 +7,8 @@
 # cluster chart). Turning one off only stops managing it: helm uninstall removes it, and keeps
 # its volumes.
 infrastructure:
+  # infrastructure/clickhouse: Altinity's ClickHouse operator, for the apps' ClickHouse servers.
+  clickhouse: true
   # infrastructure/monitoring: Prometheus, Alertmanager, Grafana, Loki and Alloy; alerts go to
   # Discord (site.secret.yaml discord.webhookUrl).
   monitoring: true
@@ -57,6 +59,12 @@ grafana:
 # values (a chart from elsewhere). Its other keys are the app's settings, and override its
 # chart's defaults. Secrets its app.yaml declares: scripts/secret.py fill.
 apps:
+  # apps/aetherium: Aetherium's market-tap, collecting Taiwan stock and futures quotes into
+  # ClickHouse.
+  aetherium:
+    # NFS export on nas.server for market-tap's monthly archive (Parquet, the ClickHouse partitions
+    # older than a year), mounted read-write.
+    archivePath: /volume1/archive
   # apps/home: Mosquitto, Zigbee2MQTT, Home Assistant.
   home:
     # LAN only: its DNS record points at network.nodeIp.

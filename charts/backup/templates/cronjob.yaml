@@ -1,6 +1,7 @@
-{{- if or .Values.volumes .Values.database }}
-# Nightly backup to the NAS (values.yaml). Each archive and dump is written as .partial and renamed
-# when complete. The node needs an NFS client (nfs-common) for kubelet to mount the share.
+{{- if or .Values.volumes .Values.database .Values.clickhouse }}
+# Nightly backup to the NAS (values.yaml). Each archive, dump and ClickHouse backup is written as
+# .partial and renamed when complete. The node needs an NFS client (nfs-common) for kubelet to mount
+# the share.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -46,6 +47,41 @@ spec:
                 - name: nas
                   mountPath: /backup
             {{- end }}
+            {{- with .Values.clickhouse }}
+            - name: clickhouse
+              # The server's own image, for its client.
+              image: {{ required "clickhouse.image is required (set by helmfile.yaml.gotmpl)" .image }}
+              env:
+                - name: TZ
+                  value: {{ required "timezonePosix is required (site.yaml)" $.Values.timezonePosix }}
+                {{- include "backup.chEnv" $ | trim | nindent 16 }}
+              # The server itself writes the backup, to its own mount of this directory (/backups,
+              # charts/clickhouse): a full one on Sundays (or when there's none yet), on other nights
+              # only the parts that changed since the latest full one.
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+                  shopt -s nullglob
+                  {{- include "backup.chClient" $ | nindent 18 }}
+                  dir={{ include "backup.dir" $ }}
+                  day=$(date +%F)
+                  mkdir -p "$dir/$day"
+                  fulls=("$dir"/20??-??-??/clickhouse-full)
+                  if [[ $(date +%u) == 7 || ${#fulls[@]} == 0 ]]; then
+                    kind=full settings=
+                  else
+                    kind=diff settings=" SETTINGS base_backup = File('/backups/${fulls[-1]#"$dir"/}')"
+                  fi
+                  rm -rf "$dir/$day/clickhouse-$kind.partial"
+                  ch --query "BACKUP DATABASE $CH_DATABASE TO File('/backups/$day/clickhouse-$kind.partial')$settings"
+                  rm -rf "$dir/$day/clickhouse-$kind"
+                  mv "$dir/$day/clickhouse-$kind.partial" "$dir/$day/clickhouse-$kind"
+              volumeMounts:
+                - name: nas
+                  mountPath: /backup
+            {{- end }}
             {{- with .Values.volumes }}
             - name: files
               image: {{ $.Values.images.tools }}
@@ -80,7 +116,21 @@ spec:
                 - |
                   set -euo pipefail
                   dir={{ include "backup.dir" . }}
+                  {{- if .Values.clickhouse }}
+                  # Each day past keepDays, except the newest one with a full ClickHouse backup: the
+                  # kept nights after it are increments on it.
+                  keep=
+                  for d in $(find "$dir" -mindepth 1 -maxdepth 1 -type d -name '20??-??-??' -mtime +{{ int .Values.keepDays }} | sort); do
+                    if [[ -d $d/clickhouse-full ]]; then
+                      [[ -z $keep ]] || rm -rf "$keep"
+                      keep=$d
+                    else
+                      rm -rf "$d"
+                    fi
+                  done
+                  {{- else }}
                   find "$dir" -mindepth 1 -maxdepth 1 -type d -name '20??-??-??' -mtime +{{ int .Values.keepDays }} -exec rm -rf {} +
+                  {{- end }}
                   ls -l "$dir/$(date +%F)"
               volumeMounts:
                 - name: nas

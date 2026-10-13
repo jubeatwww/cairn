@@ -1,0 +1,21 @@
+{{- /* Written from values.yaml (holidays) once, then kept as it is in the cluster: a typhoon day is
+       added there on the day, with kubectl edit (README "Aetherium"). */ -}}
+{{- $existing := lookup "v1" "ConfigMap" .Release.Namespace "amt-trading-calendar" }}
+# The weekdays the market is closed, for the server and the login Job: one YYYY-MM-DD per line, #
+# for comments.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: amt-trading-calendar
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
+data:
+  {{- if $existing }}
+  {{- toYaml $existing.data | nindent 2 }}
+  {{- else }}
+  holidays.txt: |
+    {{- range .Values.holidays }}
+    {{ . }}
+    {{- end }}
+  {{- end }}

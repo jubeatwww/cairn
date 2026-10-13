@@ -1,8 +1,9 @@
 {{- /* Rendered only by scripts/restore.sh (restore.date set), never by helm install/upgrade. */ -}}
 {{- with .Values.restore.date }}
 # Puts back that day's backup: the database first, in one transaction (if it fails, nothing has
-# changed), then each volume's archive, unpacked over what's there. scripts/restore.sh stops the
-# workloads that use them first.
+# changed), then the ClickHouse database (dropped, then restored: if that fails, run it again), then
+# each volume's archive, unpacked over what's there. scripts/restore.sh stops the workloads that use
+# them first.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -31,6 +32,30 @@ spec:
               dump={{ include "backup.dir" $ }}/{{ $.Values.restore.date }}/database.dump
               ls -l "$dump"
               pg_restore --clean --if-exists --no-owner --single-transaction --exit-on-error --dbname="$PGDATABASE" "$dump"
+          volumeMounts:
+            - name: nas
+              mountPath: /backup
+              readOnly: true
+        {{- end }}
+        {{- with $.Values.clickhouse }}
+        - name: clickhouse
+          image: {{ .image }}
+          env:
+            {{- include "backup.chEnv" $ | trim | nindent 12 }}
+          # The server reads the backup from its own mount (/backups); an increment brings in the
+          # full backup it was taken on by itself.
+          command:
+            - bash
+            - -c
+            - |
+              set -euo pipefail
+              {{- include "backup.chClient" $ | nindent 14 }}
+              day={{ $.Values.restore.date }}
+              backup=$(cd {{ include "backup.dir" $ }}/"$day" && ls -td clickhouse-full clickhouse-diff 2> /dev/null | head -n1) || true
+              [[ -n $backup ]] || { echo "No ClickHouse backup on $day" >&2; exit 1; }
+              echo "Restoring $day/$backup"
+              ch --query "DROP DATABASE IF EXISTS $CH_DATABASE SYNC"
+              ch --query "RESTORE DATABASE $CH_DATABASE FROM File('/backups/$day/$backup')"
           volumeMounts:
             - name: nas
               mountPath: /backup

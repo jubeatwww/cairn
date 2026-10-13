@@ -1,0 +1,5 @@
+apiVersion: v2
+name: clickhouse
+description: One ClickHouse server in an app's namespace, run by the Altinity operator.
+type: application
+version: 0.1.0

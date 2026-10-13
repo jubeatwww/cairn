@@ -1,0 +1,35 @@
+# Chart defaults. helmfile.yaml.gotmpl installs it as release clickhouse in the namespace of each app
+# with clickhouse (site.yaml: apps.<name>.clickhouse, which may set size and image). Each release
+# holds one ClickHouseInstallation (infrastructure/clickhouse) named clickhouse: apps in that
+# namespace connect to clickhouse:8123 (HTTP) or :9000 (native) with the credentials in Secret
+# clickhouse-app. The app's backup (charts/backup) backs it up every night.
+
+# ClickHouse's own image, an LTS release. site.yaml can pin one per app: apps.<name>.clickhouse.image.
+# The backup and restore run their client from the same one.
+image: clickhouse/clickhouse-server:26.8.25.14
+
+# Created on the first start (the image's CLICKHOUSE_DB), for the user. The password is generated
+# here once, then kept.
+database: app
+user: app
+
+storage:
+  # Per app in site.yaml: apps.<name>.clickhouse.size. Grows online, never shrinks.
+  size: 30Gi
+  # Capped at its size (infrastructure/base/chart, lvmStorageClass).
+  storageClass: lvm
+
+# ClickHouse sizes its caches and its memory limit (90% of it) from the container's limit.
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    memory: 4Gi
+
+# Namespaces allowed in through the NetworkPolicy, besides the app's own.
+operatorNamespace: clickhouse-system   # infrastructure/clickhouse: the operator and its exporter
+
+# Set by helmfile.yaml.gotmpl to the app's name when it has a backup: the server writes its backups
+# to <backup.path>/<backupName>/ on the NAS (charts/backup). Unset: no backup, and no NAS mount.
+backupName: ""

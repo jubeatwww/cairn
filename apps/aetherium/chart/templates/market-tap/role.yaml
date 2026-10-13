@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: amt-server
+  namespace: {{ .Release.Namespace }}
+rules:
+  # The server reads the session (Secret amt-credentials-data) before each task; the login Job
+  # writes it, creating it the first time.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch, patch, create, update]
+  # The server starts the login Jobs, picks up a running one after a restart, and waits for it.
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch, create, delete]

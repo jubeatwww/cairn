@@ -19,7 +19,7 @@ Host-level setup (OS, networking, firewall, k3s install flags) is out of scope f
 
 - **The repo is the template, the site directory is the cluster.** Every value that describes one place (hostnames, IPs, NAS paths, devices, secrets) lives in the site directory. The repo, which is public, holds charts, defaults and placeholders only, and a pre-commit hook keeps it that way.
 - **Everything is data, built in one place.** Each component and app describes itself in a `component.yaml` or `app.yaml`; `site.yaml` says which ones are on and holds their settings; `helmfile.yaml.gotmpl` turns both into releases. Adding a component or an app means adding its directory and its entry, never editing helmfile, the scripts or another component.
-- **Classified by who uses it.** `infrastructure/` is what apps build on (certificates, storage, monitoring, the database operator), `apps/` is what people use, `charts/` holds the building blocks both share (the app template, a database, a backup).
+- **Classified by who uses it.** `infrastructure/` is what apps build on (certificates, storage, monitoring, the database operators), `apps/` is what people use, `charts/` holds the building blocks both share (the app template, a database, a ClickHouse server, a backup).
 - **Third-party charts stay as published.** Each runs at an exact version with its values next to its `component.yaml`; whatever needs site values (an Ingress, a Secret) goes in the component's own chart instead.
 - **Everything is pinned.** Chart versions, image tags, and charts or values fetched from other repos: an unpinned source fails the render.
 - **Data outlives its release.** PVCs are kept when a release is uninstalled; data that keeps growing gets a size-capped `lvm` volume; whatever can't be rebuilt is listed under `backup` and copied to the NAS every night, and one command restores it.
@@ -36,12 +36,15 @@ infrastructure/        shared services, one directory per component
   monitoring/          kube-prometheus-stack, Loki, Alloy, and chart/ (Grafana's Ingress, the Discord
                        webhook's Secret)
   postgres/            the CloudNativePG operator
+  clickhouse/          Altinity's ClickHouse operator
 apps/                  one directory per app
+  aetherium/           market-tap, collecting Taiwan stock and futures quotes into ClickHouse
   home/                Mosquitto, Zigbee2MQTT, Home Assistant
   immich/              Immich, public, with the photo library on the NAS
 charts/                building blocks the components and apps share
   app/                 the template for apps without a chart of their own
   backup/              an app's or component's nightly backup to the NAS, and its restore
+  clickhouse/          an app's ClickHouse server
   postgres-cluster/    an app's Postgres cluster
 scripts/               configure.py, secret.py, check.py, restore.sh, set-grafana-password.sh;
                        precommit.py and hooks/ for commits
@@ -112,7 +115,8 @@ Keep a copy of the site directory somewhere safe (a private repo, a password man
 |---|---|
 | `description`, `timeout`, `needs` | as for a release |
 | `database` | `{}`, or `{size, image}`: a Postgres cluster in its namespace ([Postgres](#postgres)) |
-| `backup` | `volumes` (`<pvc>: {exclude, paths}`), `schedule`, `keepDays`; or `false`. The database is always included ([Backups](#backups)); `database: {}` (or `{image}`, its `pg_dump`) includes a CloudNativePG cluster `postgres` that the app's own chart makes. |
+| `clickhouse` | `{}`, or `{size, image}`: a ClickHouse server in its namespace ([ClickHouse](#clickhouse)) |
+| `backup` | `volumes` (`<pvc>: {exclude, paths}`), `schedule`, `keepDays`; or `false`. The database and ClickHouse are always included ([Backups](#backups)); `database: {}` (or `{image}`, its `pg_dump`) includes a CloudNativePG cluster `postgres` that the app's own chart makes. |
 | `site` | the settings it reads from its entry (below) |
 | `secrets` | the secrets it reads from its section of `site.secret.yaml`, for `scripts/secret.py fill` (below) |
 
@@ -222,7 +226,7 @@ Some hosts resolve to the node's LAN IP (`network.nodeIp`) instead of the public
    ufw allow from <lanCidr> to any port 21064:21065 proto tcp comment 'HomeKit Bridges'
    ufw allow from <lanCidr> to any port 5353 proto udp comment 'mDNS'
    ```
-   Leave unallocated space in an LVM volume group (`lvm.volumeGroup`) for the size-capped volumes, at least 90 GiB plus 5 GiB per Postgres cluster with the sizes in this repo (see [Storage](#storage)). Ubuntu's installer does that by default: it gives the root logical volume only part of the disk.
+   Leave unallocated space in an LVM volume group (`lvm.volumeGroup`) for the size-capped volumes, at least 100 GiB plus 5 GiB per Postgres cluster and 30 GiB per ClickHouse server with the sizes in this repo (see [Storage](#storage)). Ubuntu's installer does that by default: it gives the root logical volume only part of the disk.
 3. Optional: give your user the kubeconfig so helmfile and the scripts don't need sudo:
    ```sh
    mkdir -p ~/.kube && sudo install -m 600 -o "$USER" -g "$USER" /etc/rancher/k3s/k3s.yaml ~/.kube/config
@@ -262,13 +266,15 @@ scripts/check.py                       # certificates still Ready
 
 ## Backups
 
-Every app or component with a `backup`, and every app with a database, gets a CronJob `backup` in its namespace (`charts/backup`). Every night at 04:00 it writes to the NAS export `backup.path` (`site.yaml`), under `<name>/YYYY-MM-DD/`:
+Every app or component with a `backup`, and every app with a database or ClickHouse, gets a CronJob `backup` in its namespace (`charts/backup`). Every night at 04:00 it writes to the NAS export `backup.path` (`site.yaml`), under `<name>/YYYY-MM-DD/`:
 
 - `<pvc>.tar.gz` for each volume under `backup.volumes`
 - `database.dump`, `pg_dump` in custom format, if it has a database
+- `clickhouse-full/` or `clickhouse-diff/`, if it has ClickHouse: the server's own `BACKUP` of its database, in full on Sundays (and the first night), and on the other nights only the parts that changed since that full one. A part rewritten by a merge counts as changed, so a night's increment can reach the size of the current month's partitions.
 
-It keeps 14 days (`keepDays`; `schedule` sets the time). A failed backup shows up in Discord as `KubeJobFailed`, and in `scripts/check.py`. What's in them:
+It keeps 14 days (`keepDays`; `schedule` sets the time), and with ClickHouse, the full backup the oldest kept nights build on: about three full ones at a time. A failed backup shows up in Discord as `KubeJobFailed`, and in `scripts/check.py`. What's in them:
 
+- aetherium: market-tap's quotes (ClickHouse) and task log (Postgres); not its working directory, which only holds a day's quotes until they're uploaded, nor the monthly archive, which is on the NAS already
 - home: Zigbee2MQTT's data (the network key and paired devices, so restoring it avoids re-pairing everything) and Home Assistant's `.storage` (users, areas, integrations, groups, HomeKit) and automations, but not the history database
 - immich: Immich's own nightly database dumps, uploads from the apps and user files; not the thumbnails and encoded videos, which Immich rebuilds from the originals, nor the library, which is on the NAS already
 - monitoring: Grafana's database (users, preferences, dashboards made in the UI)
@@ -276,7 +282,7 @@ It keeps 14 days (`keepDays`; `schedule` sets the time). A failed backup shows u
 
 Back up now: `kubectl -n <namespace> create job --from=cronjob/backup backup-manual-$(date +%s)`.
 
-Restore a day with `scripts/restore.sh <name> <YYYY-MM-DD>`. It lists what it will restore and the workloads it will stop (those mounting the volumes, and with a database, those using its credentials), and asks first. Then it stops them, restores the database in one transaction (if anything fails, it stays as it was), unpacks the archives over the volumes, and starts them again.
+Restore a day with `scripts/restore.sh <name> <YYYY-MM-DD>`. It lists what it will restore and the workloads it will stop (those mounting the volumes, and with a database or ClickHouse, those using its credentials), and asks first. Then it stops them, restores the database in one transaction (if anything fails, it stays as it was), replaces the ClickHouse database with that night's backup (an increment brings in its full backup by itself; this one isn't a transaction: if it fails, run it again), unpacks the archives over the volumes, and starts them again.
 
 ## Immich
 
@@ -293,6 +299,32 @@ helmfile apply -l name=immich                                  # adds the public
 Run the port-forward on a computer whose kubectl reaches the cluster (the node's kubeconfig with `127.0.0.1` replaced by the node's LAN IP). Or run it on the node and tunnel to it, which leaves no cluster credentials on the computer: `ssh -N -L 2283:localhost:2283 <user>@<node>`.
 
 **Editing metadata.** Immich writes edits to tags, descriptions, dates and ratings as `.xmp` sidecars next to the originals, and there's no setting to put them elsewhere. With the export read-only that write fails silently and Immich re-reads the file, so the edit is lost. Before editing, switch the export to read/write on the NAS (the mount in the cluster is already read-write), and back to read-only when done. Keep those sessions short: while writable, deleting an asset for good in Immich (emptying the trash, or its nightly cleanup of items trashed 30+ days ago) also deletes the original on the NAS. Read-only, those deletes fail and the originals stay.
+
+## Aetherium
+
+`apps/aetherium` runs market-tap (from the Aetherium-Trader repos), which collects Taiwan stock and futures quotes. Its server, `amt-server`, schedules everything itself, in Taiwan time and on trading days only: at 08:00 it starts a Job that signs in to SinoTrade with the account and TWCA certificate from `site.secret.yaml`, then collects the order books and trades of the day and night sessions, uploads them to ClickHouse, and once a month moves the partitions older than a year to Parquet files on the NAS (`apps.aetherium.archivePath`). Two CronJobs follow the night session's upload every morning: `kbar-tick-agg` (06:40, 1-minute bars from the futures trades) and `replay-segments` (06:50, the sessions complete enough to replay, in Postgres). The quotes live in the namespace's [ClickHouse](#clickhouse), the task log in its [Postgres](#postgres) (schema `amt`).
+
+A day not collected is lost for good, so `AmtOrderbookSilent` (collecting but nothing written for 10 minutes) is a critical alert; `AmtTaskFailed` and `AmtMetricsAbsent` are warnings.
+
+**Install.** The certificate is a JSON file (market-tap's `export-twca` writes it, private key included), so it goes in from the file:
+
+```sh
+scripts/secret.py set apps.aetherium.twcaLocalStorage < twca-local-storage.json
+scripts/secret.py fill aetherium          # ghcr.token, the SinoTrade account and password
+helmfile apply -l app=aetherium           # ClickHouse, Postgres, market-tap, the backup
+```
+
+After every install and upgrade, the Job `clickhouse-schema` creates what's missing of the tables and views in `apps/aetherium/chart/files/clickhouse/` (a table that exists is left alone; changing one is an `ALTER` by hand). `orderbook` and `tick_data` are rebuilt from market-tap's code, which has no DDL for them: compare them with `SHOW CREATE TABLE` on the old server before importing its data.
+
+**Images.** Both are built from market-tap's repo and pushed by hand; the node is linux/amd64:
+
+```sh
+docker buildx build --platform linux/amd64 --target core -t ghcr.io/jubeatwww/amt:latest --push .
+docker buildx build --platform linux/amd64 --target login -t ghcr.io/jubeatwww/amt-login:latest --push .
+kubectl -n aetherium rollout restart deploy/amt-server     # the login Job pulls its image each morning
+```
+
+**Trading calendar.** ConfigMap `amt-trading-calendar` lists the weekdays the market is closed, one `YYYY-MM-DD` per line. It's written from `holidays` in the chart's `values.yaml` on the first install only; after that it's edited in the cluster, and helmfile keeps it as it is: `kubectl -n aetherium edit configmap amt-trading-calendar`. Add a typhoon day the morning it's announced, and next year's closures when TWSE publishes them (https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule, usually in December).
 
 ## Postgres
 
@@ -315,6 +347,20 @@ In each of those namespaces:
 **Upgrades.** For a new minor version, change `image` in `charts/postgres-cluster/values.yaml` and run `helmfile apply`; CloudNativePG restarts each instance on it. A new major version works the same way, but CloudNativePG then stops the instance and upgrades the data in place with `pg_upgrade`, which takes a few minutes. Try it on one cluster first (`database.image` in its entry, e.g. the uat one), right after a backup, and run `ANALYZE` afterwards, since `pg_upgrade` doesn't carry over the planner statistics.
 
 Grafana has CloudNativePG's dashboard, and Prometheus scrapes every instance.
+
+## ClickHouse
+
+`infrastructure/clickhouse` runs Altinity's ClickHouse operator in namespace `clickhouse-system`. Every app with `clickhouse` gets its own server in its namespace (`charts/clickhouse`, release `clickhouse`): a ClickHouseInstallation `clickhouse` with one replica and no Keeper, on a 30 GiB `lvm` volume. Like the Postgres clusters, separate servers keep projects apart.
+
+In each of those namespaces:
+
+- `clickhouse:8123` (HTTP) and `clickhouse:9000` (native) serve the database `app` to the user `app`. The image creates the database on the server's first start.
+- Secret `clickhouse-app` holds the credentials: `username`, `password` (generated on the first install, then kept), `database`, `host`, `port` (HTTP) and `url`.
+- A NetworkPolicy lets in only that namespace's pods, plus the operator, which signs in as `clickhouse_operator` from its own pod's IP only.
+
+`clickhouse` takes `size` to grow the volume and `image` to pin the version. Removing it only stops helmfile from managing the server; `helm uninstall` leaves it running, and deleting it (`kubectl -n <namespace> delete chi clickhouse`) still leaves its volume (`reclaimPolicy: Retain`). It's backed up nightly with its app's [backup](#backups): the server writes the backup itself, to `<backup.path>/<app>/` on the NAS, which it mounts at `/backups`. Like every pod that mounts the NAS, it can't start while the NAS is unreachable, and does once it's back.
+
+**Upgrades.** Change `image` in `charts/clickhouse/values.yaml` (an LTS release, `YY.3` or `YY.8`) and run `helmfile apply`; the operator restarts the server on it. Read ClickHouse's changelog for backward-incompatible changes first, and try it on one app (`clickhouse.image` in its entry) right after a backup.
 
 ## Monitoring
 
@@ -347,7 +393,7 @@ scripts/check.py --test-alert                     # [FIRING] in ~30 s, [RESOLVED
 
 Two StorageClasses, both on the node's disk:
 
-- `lvm` (`infrastructure/base/chart`, provisioned by OpenEBS LVM LocalPV): each volume is an LVM logical volume of exactly its requested size, in the volume group `lvm.volumeGroup` from `site.yaml`. The size is a hard cap: past it, writes fail with "no space left" and the root filesystem isn't touched. Like `local-path`, a volume can be mounted by more than one pod on the node (`shared`), so the nightly backup reads it while its app runs. For volumes that keep growing: Prometheus (20 GiB), Loki (10 GiB), Immich's data (40 GiB), its Postgres (10 GiB) and model cache (10 GiB), each Postgres cluster (5 GiB by default).
+- `lvm` (`infrastructure/base/chart`, provisioned by OpenEBS LVM LocalPV): each volume is an LVM logical volume of exactly its requested size, in the volume group `lvm.volumeGroup` from `site.yaml`. The size is a hard cap: past it, writes fail with "no space left" and the root filesystem isn't touched. Like `local-path`, a volume can be mounted by more than one pod on the node (`shared`), so the nightly backup reads it while its app runs. For volumes that keep growing: Prometheus (20 GiB), Loki (10 GiB), Immich's data (40 GiB), its Postgres (10 GiB) and model cache (10 GiB), market-tap's working directory (10 GiB), each Postgres cluster (5 GiB by default) and ClickHouse server (30 GiB by default).
 - `local-path` (k3s's default): a directory on the root filesystem. The requested size is neither enforced nor reserved. For the volumes that stay small: Home Assistant, Zigbee2MQTT, Grafana. Mounting them needs nothing but the node, so the home automation starts even when the LVM driver doesn't.
 
 A PVC's class can't change in place: moving a volume to another class means a new PVC and copying the data. The `lvm` volumes can only use the volume group's unallocated space, and grow online, without restarting anything:

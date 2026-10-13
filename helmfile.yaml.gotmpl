@@ -27,8 +27,10 @@ environments:
 {{- /* Read here only for the apps' sections, which each app gets on its own (apps.<name>). */}}
 {{- $secrets := dict }}
 {{- if isFile (printf "%s/site.secret.yaml" $site) }}{{ $secrets = readFile (printf "%s/site.secret.yaml" $site) | fromYaml | default dict }}{{ end }}
-{{- /* The image a database's dump uses unless the app pins its own: the cluster's default. */}}
+{{- /* The image a database's dump uses unless the app pins its own: the cluster's default. The
+       same for ClickHouse's client. */}}
 {{- $pgImage := (readFile "charts/postgres-cluster/values.yaml" | fromYaml).image }}
+{{- $chImage := (readFile "charts/clickhouse/values.yaml" | fromYaml).image }}
 
 {{- /* Components. A local chart gets site.yaml (and site.secret.yaml), a third-party one its
        <release>.yaml; both then get the site's values/<release>.yaml. A component's backup: adds
@@ -70,9 +72,10 @@ environments:
        site settings, and any chart value to override), then its section of site.secret.yaml.
        Each secret its app.yaml declares (secrets:) must be set there first: nothing renders until
        scripts/secret.py fill has set it, so a chart needn't check for it itself.
-       A database adds release postgres in the same namespace; volumes under backup:, or a
-       database (its own, or backup.database for the cluster postgres its chart makes), add
-       release backup (charts/backup) there too, unless backup: false. */}}
+       A database adds release postgres in the same namespace, clickhouse release clickhouse;
+       volumes under backup:, a database (its own, or backup.database for the cluster postgres its
+       chart makes), or clickhouse, add release backup (charts/backup) there too, unless
+       backup: false. */}}
 {{- range $name, $entry := $apps }}
 {{- $entry = $entry | default dict }}
 {{- if not (kindIs "map" $entry) }}{{ fail (printf "apps.%s must be a map (site.yaml)" $name) }}{{ end }}
@@ -95,6 +98,16 @@ environments:
 {{- if hasKey $db "image" }}{{ $_ := set $dbValues "image" $db.image }}{{ end }}
 {{- $releases = append $releases (dict "name" "postgres" "namespace" $name "chart" "./charts/postgres-cluster" "timeout" 600 "labels" (dict "app" $name) "needs" (list "cnpg-system/cloudnative-pg") "values" (list (printf "%s/site.yaml" $site) $dbValues)) }}
 {{- $needs = append $needs (printf "%s/postgres" $name) }}
+{{- end }}
+{{- if hasKey $spec "clickhouse" }}
+{{- if not (get "clickhouse" false $infra) }}{{ fail (printf "apps.%s.clickhouse needs infrastructure.clickhouse (site.yaml)" $name) }}{{ end }}
+{{- $ch := $spec.clickhouse | default dict }}
+{{- $chValues := dict }}
+{{- if hasKey $ch "size" }}{{ $_ := set $chValues "storage" (dict "size" $ch.size) }}{{ end }}
+{{- if hasKey $ch "image" }}{{ $_ := set $chValues "image" $ch.image }}{{ end }}
+{{- if kindIs "map" (get "backup" dict $spec) }}{{ $_ := set $chValues "backupName" $name }}{{ end }}
+{{- $releases = append $releases (dict "name" "clickhouse" "namespace" $name "chart" "./charts/clickhouse" "labels" (dict "app" $name) "needs" (list "clickhouse-system/clickhouse-operator") "values" (list (printf "%s/site.yaml" $site) $chValues)) }}
+{{- $needs = append $needs (printf "%s/clickhouse" $name) }}
 {{- end }}
 {{- $chart := get "chart" "" $spec }}
 {{- $values := list (printf "%s/site.yaml" $site) }}
@@ -127,8 +140,11 @@ environments:
 {{- $db := mergeOverwrite dict (get "database" dict $spec | default dict) (get "database" dict $b | default dict) }}
 {{- $_ := set $b "database" (dict "image" (get "image" $pgImage $db)) }}
 {{- end }}
-{{- if or (get "volumes" dict $b) (hasKey $b "database") }}
-{{- $releases = append $releases (dict "name" "backup" "namespace" $name "chart" "./charts/backup" "labels" (dict "app" $name "backup" $name) "needs" (list (printf "%s/%s" $name $name) (printf "%s/postgres" $name)) "values" (list (printf "%s/site.yaml" $site) $b)) }}
+{{- if hasKey $spec "clickhouse" }}
+{{- $_ := set $b "clickhouse" (dict "image" (get "image" $chImage ($spec.clickhouse | default dict))) }}
+{{- end }}
+{{- if or (get "volumes" dict $b) (hasKey $b "database") (hasKey $b "clickhouse") }}
+{{- $releases = append $releases (dict "name" "backup" "namespace" $name "chart" "./charts/backup" "labels" (dict "app" $name "backup" $name) "needs" (list (printf "%s/%s" $name $name) (printf "%s/postgres" $name) (printf "%s/clickhouse" $name)) "values" (list (printf "%s/site.yaml" $site) $b)) }}
 {{- end }}
 {{- else if ne (toString $backup) "false" }}{{ fail (printf "apps.%s.backup must be a map, or false (site.yaml)" $name) }}
 {{- end }}

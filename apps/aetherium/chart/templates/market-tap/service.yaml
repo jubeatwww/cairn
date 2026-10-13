@@ -1,0 +1,15 @@
+# The server's metrics, for Prometheus. Its name is the job label the alerts read.
+apiVersion: v1
+kind: Service
+metadata:
+  name: amt-server-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: amt-server
+spec:
+  selector:
+    app.kubernetes.io/name: amt-server
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: metrics

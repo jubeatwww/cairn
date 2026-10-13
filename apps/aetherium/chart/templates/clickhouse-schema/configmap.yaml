@@ -1,0 +1,12 @@
+# The tables and views market-tap and its readers use (files/clickhouse/), one statement per file,
+# applied in name order by the Job next to this.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-schema
+  namespace: {{ .Release.Namespace }}
+data:
+  {{- range $path, $_ := .Files.Glob "files/clickhouse/*.sql" }}
+  {{ base $path }}: |
+    {{- $.Files.Get $path | nindent 4 }}
+  {{- end }}

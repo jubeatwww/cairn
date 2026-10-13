@@ -5,10 +5,11 @@
 #                                              with a backup (monitoring)
 #
 # Lists what it would restore and the workloads it would stop (those mounting the backed-up volumes,
-# and with a database, those using its credentials), and asks first. Then it stops them, restores
-# the database dump (in one transaction: if it fails, the database is unchanged) and the volume
-# archives (unpacked over what's there; files the backup leaves out, like HA's history database,
-# stay), and starts them again. Needs the release to exist: on a fresh cluster, helmfile apply first.
+# and with a database or ClickHouse, those using its credentials), and asks first. Then it stops
+# them, restores the database dump (in one transaction: if it fails, the database is unchanged), the
+# ClickHouse database (dropped, then restored) and the volume archives (unpacked over what's there;
+# files the backup leaves out, like HA's history database, stay), and starts them again. Needs the
+# release to exist: on a fresh cluster, helmfile apply first.
 # Uses $KUBECONFIG, else ~/.kube/config, else k3s's root-only kubeconfig (run with sudo).
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -22,36 +23,40 @@ manifest=$(helmfile -q -f helmfile.yaml.gotmpl template --skip-deps -l backup="$
   --set restore.date="$day" --set restore.job="$job" --show-only templates/restore-job.yaml) ||
   { echo "Nothing to restore for $name: no backup release for it in helmfile.yaml.gotmpl." >&2; exit 1; }
 
-# From the Job: its namespace, the PVCs it writes, and whether it restores a database.
-read -r ns db claims < <(python3 -c '
+# From the Job: its namespace, the PVCs it writes, and whether it restores a database and ClickHouse.
+read -r ns db ch claims < <(python3 -c '
 import sys, yaml
 job = next(d for d in yaml.safe_load_all(sys.stdin) if d)
 spec = job["spec"]["template"]["spec"]
 claims = [v["persistentVolumeClaim"]["claimName"] for v in spec["volumes"] if "persistentVolumeClaim" in v]
-db = any(c["name"] == "database" for c in spec.get("initContainers", []))
-print(job["metadata"]["namespace"], int(db), ",".join(claims))
+init = [c["name"] for c in spec.get("initContainers", [])]
+print(job["metadata"]["namespace"], int("database" in init), int("clickhouse" in init), ",".join(claims))
 ' <<< "$manifest")
 k() { kubectl -n "$ns" "$@"; }
 
-# The Deployments and StatefulSets to stop: "<kind>/<name> <replicas> <pod selector>" per line.
+# The Deployments and StatefulSets to stop: "<kind>/<name> <replicas> <pod selector>" per line. Not
+# the ClickHouse server itself (it reads its password from clickhouse-app too): it does the restore.
 workloads=$(k get deploy,statefulset -o json | python3 -c '
 import json, sys
-claims, db = set(filter(None, sys.argv[1].split(","))), sys.argv[2] == "1"
+claims, db, ch = set(filter(None, sys.argv[1].split(","))), sys.argv[2] == "1", sys.argv[3] == "1"
 for w in json.load(sys.stdin)["items"]:
+    if "clickhouse.altinity.com/chi" in w["spec"]["template"]["metadata"].get("labels", {}):
+        continue
     pod = w["spec"]["template"]["spec"]
     uses_claim = any(v.get("persistentVolumeClaim", {}).get("claimName") in claims for v in pod.get("volumes", []))
     containers = pod.get("containers", []) + pod.get("initContainers", [])
     refs = [e.get("valueFrom", {}).get("secretKeyRef", {}).get("name") for c in containers for e in c.get("env", [])]
     refs += [e.get("secretRef", {}).get("name") for c in containers for e in c.get("envFrom", [])]
-    if uses_claim or (db and "postgres-app" in refs):
+    if uses_claim or (db and "postgres-app" in refs) or (ch and "clickhouse-app" in refs):
         selector = ",".join(f"{k}={v}" for k, v in w["spec"]["selector"].get("matchLabels", {}).items())
         kind, name, replicas = w["kind"].lower(), w["metadata"]["name"], w["spec"].get("replicas", 1)
         print(f"{kind}/{name} {replicas} {selector}")
-' "$claims" "$db")
+' "$claims" "$db" "$ch")
 
 echo "Restore $name from $day (namespace $ns):"
-((db)) && echo "  database: replaced by that day's dump"
-[[ -n $claims ]] && echo "  volumes:  ${claims//,/, } (archives unpacked over them)"
+((db)) && echo "  database:   replaced by that day's dump"
+((ch)) && echo "  clickhouse: replaced by that day's backup"
+[[ -n $claims ]] && echo "  volumes:    ${claims//,/, } (archives unpacked over them)"
 echo "Stopped meanwhile:"
 if [[ -n $workloads ]]; then while read -r w n _; do echo "  $w ($n)"; done <<< "$workloads"; else echo "  (none)"; fi
 read -rp "Go ahead? [y/N] " ok
