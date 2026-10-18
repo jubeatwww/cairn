@@ -26,12 +26,13 @@ storage:
     storageClass: lvm
 
 resources:
+  # The server peaks around 600Mi during a session.
   server:
     requests:
       cpu: 500m
       memory: 512Mi
     limits:
-      memory: 2Gi
+      memory: 1Gi
   replaySegments:
     requests:
       cpu: 100m

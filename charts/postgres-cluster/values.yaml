@@ -19,12 +19,13 @@ storage:
   # Capped at its size (infrastructure/base/chart, lvmStorageClass).
   storageClass: lvm
 
+# The apps' databases are small: each instance stays near 100Mi (shared_buffers is 128MB).
 resources:
   requests:
     cpu: 100m
     memory: 256Mi
   limits:
-    memory: 1Gi
+    memory: 512Mi
 
 # Namespaces allowed in through the NetworkPolicy, besides the cluster's own.
 operatorNamespace: cnpg-system      # infrastructure/postgres: checks each instance's status
