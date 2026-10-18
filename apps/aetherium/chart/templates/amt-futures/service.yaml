@@ -1,0 +1,15 @@
+# The collector's metrics, for Prometheus. Its name is the job label the alerts read.
+apiVersion: v1
+kind: Service
+metadata:
+  name: amt-futures-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: amt-futures
+spec:
+  selector:
+    app.kubernetes.io/name: amt-futures
+  ports:
+    - name: metrics
+      port: 9091
+      targetPort: metrics

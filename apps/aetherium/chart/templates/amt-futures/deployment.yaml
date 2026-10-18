@@ -1,0 +1,75 @@
+# amt-futures: the TX / MX / TMF futures quotes (ticks and five-level book) over Shioaji's API, into
+# ClickHouse tables of its own (tick_fut_sj, book_fut_sj, which it creates). Design: market-tap's
+# docs/futures-api-design.md. It runs alongside amt-server's web feed, which keeps the futures'
+# intraday open interest that no API has.
+#
+# One process is one login: it exits for a fresh one every morning at 07:30, when a session goes
+# down or the stream goes quiet, and the kubelet starts it again, so a restart a day is normal.
+# Recreate and one replica: Shioaji allows five connections per person, and a rolling update would
+# hold two. The grace period lets it flush to ClickHouse and log out.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amt-futures
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: amt-futures
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: amt-futures
+      annotations:
+        # A new API key takes a restart to be read.
+        checksum/sj-api: {{ include (print $.Template.BasePath "/amt-futures/secret.yaml") . | sha256sum }}
+    spec:
+      # It never calls the Kubernetes API.
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: ghcr-pull
+      terminationGracePeriodSeconds: 90
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: collector
+          image: {{ .Values.images.amtFutures }}
+          imagePullPolicy: {{ .Values.futuresImagePullPolicy }}
+          args: [run]
+          envFrom:
+            # SJ_API_KEY, SJ_SECRET_KEY
+            - secretRef:
+                name: sj-api
+          env:
+            {{- include "aetherium.clickhouseEnv" . | nindent 12 }}
+            - name: AMT_HOLIDAYS_FILE
+              value: /etc/amt/holidays.txt
+          ports:
+            - name: metrics
+              containerPort: 9091
+          resources:
+            {{- toYaml .Values.resources.futures | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            # Its working directory (the image's): spool, login count, the SDK's files.
+            - name: state
+              mountPath: /state
+            - name: calendar
+              mountPath: /etc/amt
+              readOnly: true
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: amt-futures-state
+        - name: calendar
+          configMap:
+            name: amt-trading-calendar

@@ -22,6 +22,12 @@ secrets:
   sinotrade.password:
     comment: Its password.
     ask: SinoTrade 登入密碼
+  sinotrade.apiKey:
+    comment: The Shioaji API key amt-futures collects futures quotes with (SinoPac's API management page; quotes need no CA certificate).
+    ask: Shioaji API Key
+  sinotrade.secretKey:
+    comment: Its secret key.
+    ask: Shioaji Secret Key
   twcaLocalStorage:
     comment: "The TWCA certificate the login Job presents: the JSON market-tap's export-twca writes (twca-local-storage.json), private key included. From the file: scripts/secret.py set apps.<name>.twcaLocalStorage < twca-local-storage.json"
     ask: twca-local-storage.json 的內容（多行的話改用 scripts/secret.py set apps.<name>.twcaLocalStorage < 檔案）

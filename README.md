@@ -304,25 +304,29 @@ Run the port-forward on a computer whose kubectl reaches the cluster (the node's
 
 `apps/aetherium` runs market-tap (from the Aetherium-Trader repos), which collects Taiwan stock and futures quotes. Its server, `amt-server`, schedules everything itself, in Taiwan time and on trading days only: at 08:00 it starts a Job that signs in to SinoTrade with the account and TWCA certificate from `site.secret.yaml`, then collects the order books and trades of the day and night sessions, uploads them to ClickHouse, and once a month moves the partitions older than a year to Parquet files on the NAS (`apps.aetherium.archivePath`). Two CronJobs follow the night session's upload every morning: `kbar-tick-agg` (06:40, 1-minute bars from the futures trades) and `replay-segments` (06:50, the sessions complete enough to replay, in Postgres). The quotes live in the namespace's [ClickHouse](#clickhouse), the task log in its [Postgres](#postgres) (schema `amt`).
 
-A day not collected is lost for good, so `AmtOrderbookSilent` (collecting but nothing written for 10 minutes) is a critical alert; `AmtTaskFailed` and `AmtMetricsAbsent` are warnings.
+`amt-futures` collects the futures (TX, MX, TMF) a second way, over SinoPac's Shioaji API with an API key instead of the web feed: always running, it subscribes before each session, writes ticks and order books into its own tables (`tick_fut_sj`, `book_fut_sj`, which it creates), and after the day session backfills the ticks it missed from Shioaji's history. For now both run side by side, each into its own tables, so the two can be compared (market-tap's `scripts/compare_futures_sources.py`); once the API side has proved itself, the web feed drops its futures order books and ticks and keeps only the intraday open interest, which no API has. Design: market-tap's `docs/futures-api-design.md`.
+
+A day not collected is lost for good, so `AmtOrderbookSilent` (collecting but nothing written for 10 minutes) and `AmtFuturesSilent` (a contract's book quiet for 5 minutes in a session) are critical alerts; the rest of the `amt` and `amt-futures` groups are mostly warnings.
 
 **Install.** The certificate is a JSON file (market-tap's `export-twca` writes it, private key included), so it goes in from the file:
 
 ```sh
 scripts/secret.py set apps.aetherium.twcaLocalStorage < twca-local-storage.json
-scripts/secret.py fill aetherium          # ghcr.token, the SinoTrade account and password
+scripts/secret.py fill aetherium          # ghcr.token, the SinoTrade account and password, the Shioaji API key pair
 helmfile apply -l app=aetherium           # ClickHouse, Postgres, market-tap, the backup
 ```
 
 After every install and upgrade, the Job `clickhouse-schema` creates what's missing of the tables and views in `apps/aetherium/chart/files/clickhouse/` (a table that exists is left alone; changing one is an `ALTER` by hand). `orderbook` and `tick_data` are rebuilt from market-tap's code, which has no DDL for them: compare them with `SHOW CREATE TABLE` on the old server before importing its data.
 
-**Images.** Both are built from market-tap's repo and pushed by hand; the node is linux/amd64:
+**Images.** All are built from market-tap's repo and pushed by hand; the node is linux/amd64:
 
 ```sh
 docker buildx build --platform linux/amd64 --target core -t ghcr.io/jubeatwww/amt:latest --push .
 docker buildx build --platform linux/amd64 --target login -t ghcr.io/jubeatwww/amt-login:latest --push .
 kubectl -n aetherium rollout restart deploy/amt-server     # the login Job pulls its image each morning
 ```
+
+`amt-futures` has a version tag instead, so its daily restart never picks up a new build: build `futures/` as `ghcr.io/jubeatwww/amt-futures:<version>`, then set `images.amtFutures` in the chart's `values.yaml` and apply.
 
 **Trading calendar.** ConfigMap `amt-trading-calendar` lists the weekdays the market is closed, one `YYYY-MM-DD` per line. It's written from `holidays` in the chart's `values.yaml` on the first install only; after that it's edited in the cluster, and helmfile keeps it as it is: `kubectl -n aetherium edit configmap amt-trading-calendar`. Add a typhoon day the morning it's announced, and next year's closures when TWSE publishes them (https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule, usually in December).
 

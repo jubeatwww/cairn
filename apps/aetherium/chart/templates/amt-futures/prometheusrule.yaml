@@ -1,0 +1,105 @@
+{{- if (.Values.infrastructure | default dict).monitoring }}
+# amt-futures' alerts (market-tap's k8s/monitoring.yaml), to Discord with the rest. An order book
+# not recorded is lost for good, hence the critical ones; ticks are backfilled from Shioaji's
+# history after each day session (the reconcile at 14:05 and 14:35).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: amt-futures
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: amt-futures
+      rules:
+        # A contract's book stopped during a session. The collector signs in again by itself (all
+        # quiet for 120 seconds, or one contract for 600, three times a session at most), which
+        # restarts the for:, so this fires when that didn't bring it back.
+        - alert: AmtFuturesSilent
+          expr: >-
+            (time() - amt_fut_last_message_timestamp_seconds{kind="book"}) > 300
+            and on() (amt_fut_session_active == 1)
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "futures {{`{{ $labels.symbol }}`}} order book is silent during a session"
+            description: "kubectl -n {{ .Release.Namespace }} logs deploy/amt-futures; order book gaps can't be backfilled."
+        # A contract isn't subscribed (resolving or subscribing keeps failing), or the broker's R1
+        # isn't the front month the settlement calendar says.
+        - alert: AmtFuturesNotSubscribed
+          expr: (amt_fut_subscribed == 0 or amt_fut_contract_mismatch == 1) and on() (amt_fut_session_active == 1)
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "futures {{`{{ $labels.symbol }}`}} is not subscribed to the expected contract"
+        # Its own daily login cap stopped it: something is restarting it in a loop, and the rest of
+        # the day's sessions go uncollected.
+        - alert: AmtFuturesLoginBlocked
+          expr: amt_fut_login_blocked == 1
+          labels:
+            severity: critical
+          annotations:
+            summary: "amt-futures hit its daily login cap and is not collecting"
+        # The main loop is stuck in a ClickHouse or SDK call: quotes still arrive, nothing writes
+        # them out.
+        - alert: AmtFuturesLoopStalled
+          expr: (time() - amt_fut_loop_heartbeat_timestamp_seconds) > 180
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "amt-futures main loop has not run for 3 minutes"
+        - alert: AmtFuturesCallbackErrors
+          expr: increase(amt_fut_callback_errors_total[10m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "amt-futures {{`{{ $labels.kind }}`}} callback is throwing: SDK fields changed?"
+        # Batches ClickHouse didn't take wait in /state/spool (PVC amt-futures-state).
+        - alert: AmtFuturesSpoolBacklog
+          expr: amt_fut_spool_files > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "amt-futures has {{`{{ $value }}`}} unflushed batch file(s)"
+            description: "ClickHouse writes are failing; the batches wait on PVC amt-futures-state."
+        # A batch the server keeps refusing is set aside as *.bad, for a person to look at.
+        - alert: AmtFuturesSpoolQuarantined
+          expr: increase(amt_fut_spool_quarantined_total[1h]) > 0 or increase(amt_fut_rows_dropped_total[1h]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "amt-futures quarantined or dropped batches"
+            description: "Look for *.bad under /state/spool in the amt-futures pod."
+        # The ticks from Shioaji's history weren't written (failed, incomplete, or over the quota).
+        - alert: AmtFuturesReconcileTrouble
+          expr: increase(amt_fut_reconcile_runs_total{status=~"failed|quota|incomplete"}[6h]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "futures tick reconcile {{`{{ $labels.status }}`}}"
+            description: "Ticks weren't backfilled from history; it tries again at the next 14:05 / 14:35 pass."
+        - alert: AmtFuturesCalendarUnreadable
+          expr: amt_fut_calendar_ok == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "amt-futures cannot read the trading calendar"
+        # Five per person: the collector holds one; the probe and reconcile commands one each.
+        - alert: AmtFuturesConnectionsHigh
+          expr: amt_fut_api_connections >= 4
+          labels:
+            severity: warning
+          annotations:
+            summary: "Shioaji connections at {{`{{ $value }}`}} of 5"
+        - alert: AmtFuturesMetricsAbsent
+          expr: absent(up{job="amt-futures-metrics"}) or up{job="amt-futures-metrics"} == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "amt-futures metrics endpoint is unreachable"
+{{- end }}

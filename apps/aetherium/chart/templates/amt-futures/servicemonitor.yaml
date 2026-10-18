@@ -1,0 +1,15 @@
+{{- if (.Values.infrastructure | default dict).monitoring }}
+# Prometheus scrapes the collector's metrics (amt_fut_*; infrastructure/monitoring brings the CRD).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: amt-futures
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: amt-futures
+  endpoints:
+    - port: metrics
+      interval: 30s
+{{- end }}
