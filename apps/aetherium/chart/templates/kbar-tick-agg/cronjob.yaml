@@ -30,7 +30,10 @@ spec:
                 - |
                   set -eu
                   {{- include "aetherium.curlAuth" . | nindent 18 }}
-                  curl -sS --fail-with-body -K /tmp/curlrc "$CLICKHOUSE_URL/?database=$CLICKHOUSE_DB" --data-binary "
+                  # Retried: a new pod's first connections are dropped for a few seconds, until k3s
+                  # adds it to the server's NetworkPolicy. The INSERT is safe to repeat.
+                  curl -sS --fail-with-body --connect-timeout 5 --retry 5 --retry-connrefused --retry-delay 2 \
+                    -K /tmp/curlrc "$CLICKHOUSE_URL/?database=$CLICKHOUSE_DB" --data-binary "
                   INSERT INTO kbar_1m (ts, symbol, source, open, high, low, close, volume, amount)
                   SELECT
                       toStartOfMinute(ts) + INTERVAL 1 MINUTE AS bar_ts,
