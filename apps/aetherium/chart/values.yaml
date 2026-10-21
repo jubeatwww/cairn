@@ -10,7 +10,7 @@ images:
   # amt-futures, the futures collector on Shioaji's API (market-tap's futures/): a version tag,
   # pulled once (futuresImagePullPolicy). It restarts itself every morning, and mustn't pick up an
   # unreviewed build then; upgrading is changing this tag.
-  amtFutures: ghcr.io/jubeatwww/amt-futures:0.1.1
+  amtFutures: ghcr.io/jubeatwww/amt-futures:0.1.2
   # The ClickHouse schema and kbar-tick-agg send SQL over HTTP.
   curl: curlimages/curl:8.22.0
   # replay-segments; its packages are pinned in its CronJob.
