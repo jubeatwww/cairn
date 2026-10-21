@@ -74,8 +74,11 @@ def private_tokens():
         # site.yaml's too.
         for path, s in strings(load(f), keys=f.name != "site.secret.yaml"):
             found.setdefault(s, f"{f.name}: {path}")
-    # What the values imply: each DNS zone and its name without the TLD, the LAN's prefix.
-    hosts = [s for _, s in strings(site) if re.fullmatch(r"([a-z0-9-]+\.)+[a-z]{2,}", s)]
+    # What the values imply: each DNS zone and its name without the TLD, the LAN's prefix. File
+    # names look like hosts too (a plugin entry's values files): their stem would then match
+    # ordinary words everywhere.
+    hosts = [s for _, s in strings(site) if re.fullmatch(r"([a-z0-9-]+\.)+[a-z]{2,}", s)
+             and not s.endswith((".yaml", ".yml", ".json"))]
     for h in hosts + list(((site.get("acme") or {}).get("zones") or {})):
         labels = h.split(".")
         found.setdefault(".".join(labels[-2:]), f"site.yaml: the zone of {h}")
