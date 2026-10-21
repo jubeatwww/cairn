@@ -1,7 +1,9 @@
-# Every morning, after the night session's upload: the last three days of tick_futures aggregated
-# again into kbar_1m (source tick_agg). ReplacingMergeTree, and the overlapping window makes it
-# idempotent: a day not fully collected gets partial bars, replaced the next morning. Readers use
-# kbar_1m_canonical (files/clickhouse/).
+# Every morning, after the night session: the last three days of tick_futures (the view across the
+# 2026-10-24 cutover, files/clickhouse/16-tick_futures.sql) aggregated again into kbar_1m (source
+# tick_agg). ReplacingMergeTree, and the overlapping window makes it idempotent: a day not fully
+# collected gets partial bars, replaced the next morning — so does a night session read from the
+# stream before the 14:05 backfill from Shioaji's history. Readers use kbar_1m_canonical
+# (files/clickhouse/).
 apiVersion: batch/v1
 kind: CronJob
 metadata:

@@ -1,6 +1,9 @@
--- From market-tap's docs/futures-schema.sql (column rationale and V-field mapping:
--- docs/futures-design.md).
-CREATE TABLE IF NOT EXISTS orderbook_futures
+-- The futures' order books from MoneyDJ's web feed, up to the 2026-10-24 cutover; it was named
+-- orderbook_futures, which is now the view that consumers read (17-orderbook_futures.sql). Since
+-- then the books come from amt-futures (book_fut_sj) and MoneyDJ only gives the open interest
+-- (futures_oi). From market-tap's docs/futures-schema.sql (column rationale and V-field mapping:
+-- docs/futures-design.md); sparse: a column a push didn't carry is 0.
+CREATE TABLE IF NOT EXISTS orderbook_futures_mdj
 (
     ts DateTime64(3)              CODEC(Delta(8), ZSTD(3)),
     symbol LowCardinality(String) CODEC(ZSTD(3)),

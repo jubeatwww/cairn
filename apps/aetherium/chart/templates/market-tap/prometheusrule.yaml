@@ -19,11 +19,13 @@ spec:
           annotations:
             summary: "amt task {{`{{ $labels.task }}`}} failed"
             description: "kubectl -n {{ .Release.Namespace }} logs deploy/amt-server, and amt.task_runs in Postgres."
-        # Collecting, but nothing flushed for 10 minutes: the subscription died silently. Only while
-        # a collection runs, so holidays stay quiet.
+        # Collecting, but no push received for 10 minutes: the subscription died silently. Pushes,
+        # not rows written: the night session writes only the futures' open interest, which can go
+        # quiet for 20 minutes while the feed is alive. Only while a collection runs, so holidays
+        # stay quiet.
         - alert: AmtOrderbookSilent
           expr: >-
-            (sum(rate(amt_ob_rows_flushed_total[10m])) == 0 or absent(amt_ob_rows_flushed_total))
+            (sum(rate(amt_ob_pushes_received_total[10m])) == 0 or absent(amt_ob_pushes_received_total))
             and on() (amt_ob_collection_active == 1)
           for: 10m
           labels:

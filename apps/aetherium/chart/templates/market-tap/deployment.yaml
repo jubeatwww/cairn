@@ -1,8 +1,9 @@
 # amt server: one process that schedules everything by itself, in Taiwan time on trading days (the
-# calendar's holidays left out): the morning login (a Job, from images.amtLogin), stock and futures
-# quotes over the day and night sessions, their uploads to ClickHouse, the monthly archive and
-# dedup audit. Recreate and one replica: only one process may hold /data. The grace period lets a
-# running collection flush before it stops.
+# calendar's holidays left out): the morning login (a Job, from images.amtLogin), the stocks' quotes
+# and the futures' open interest over the day and night sessions (their books and trades are
+# amt-futures'), the uploads to ClickHouse, the monthly archive and dedup audit. Recreate and one
+# replica: only one process may hold /data. The grace period lets a running collection flush before
+# it stops.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
