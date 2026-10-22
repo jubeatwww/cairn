@@ -1,6 +1,6 @@
 -- orderbook_futures: the futures' five-level books, in the shape every consumer reads
 -- (replay-segments, hindsight) — MoneyDJ's symbols and columns, prices × 100 — across the
--- 2026-10-24 cutover (06:00 Taiwan time, between two sessions):
+-- cutover. The switch is at 2026-10-22 06:00 Taiwan time, as for tick_futures (16-tick_futures.sql):
 --   before: MoneyDJ's web feed (orderbook_futures_mdj), sparse: a column a push didn't carry is 0
 --   after:  Shioaji's API (book_fut_sj, market-tap's amt-futures), every row a full book, the
 --           pre-open trial-match books included (MoneyDJ's had them too)
@@ -18,7 +18,7 @@ SELECT
     mark_bias, bid_order_count, bid_order_size, ask_order_count, ask_order_size,
     buy_match_qty, sell_match_qty
 FROM orderbook_futures_mdj
-WHERE ts < toDateTime64('2026-10-23 22:00:00', 3, 'UTC')
+WHERE ts < toDateTime64('2026-10-21 22:00:00', 3, 'UTC')
 UNION ALL
 SELECT
     CAST(ts AS DateTime64(3)) AS ts,
@@ -38,4 +38,4 @@ SELECT
     toUInt32(0) AS ask_order_count, toUInt32(0) AS ask_order_size,
     toUInt32(0) AS buy_match_qty, toUInt32(0) AS sell_match_qty
 FROM book_fut_sj
-WHERE ts >= toDateTime64('2026-10-23 22:00:00', 6, 'UTC')
+WHERE ts >= toDateTime64('2026-10-21 22:00:00', 6, 'UTC')

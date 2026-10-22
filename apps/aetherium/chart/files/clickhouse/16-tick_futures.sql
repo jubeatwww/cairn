@@ -1,6 +1,8 @@
 -- tick_futures: the futures' trades, in the shape every consumer reads (kbar-tick-agg,
 -- replay-segments, hindsight) — MoneyDJ's symbols, prices × 100, its direction codes — across the
--- 2026-10-24 cutover (06:00 Taiwan time, between two sessions):
+-- cutover. The switch is at 2026-10-22 06:00 Taiwan time, two days before the cutover itself: the
+-- typhoon closure of 10-23 skipped the morning job that would have fetched MoneyDJ's 10-22 night
+-- session, while Shioaji has both of that day's sessions.
 --   before: MoneyDJ's replay (tick_futures_mdj)
 --   after:  Shioaji's API (tick_fut_sj, market-tap's amt-futures). Per (product, contract, trade
 --           date) the history if there is one (written after the day session), else the stream
@@ -16,7 +18,7 @@ CREATE VIEW IF NOT EXISTS tick_futures AS
 SELECT ts, symbol, trade_date, price, bid, ask, volume, total_volume, direction,
        mark_bias, buy_match_qty, sell_match_qty, seq
 FROM tick_futures_mdj
-WHERE ts < toDateTime('2026-10-23 22:00:00', 'UTC')
+WHERE ts < toDateTime('2026-10-21 22:00:00', 'UTC')
 UNION ALL
 SELECT
     CAST(ts AS DateTime) AS ts,
@@ -33,7 +35,7 @@ SELECT
     toUInt32(0) AS sell_match_qty,
     seq
 FROM tick_fut_sj
-WHERE ts >= toDateTime64('2026-10-23 22:00:00', 6, 'UTC')
+WHERE ts >= toDateTime64('2026-10-21 22:00:00', 6, 'UTC')
   AND (origin = 'hist'
        OR (origin = 'stream' AND simtrade = 0
            AND (symbol, contract, trade_date) NOT IN
