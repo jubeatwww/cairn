@@ -319,7 +319,7 @@ scripts/secret.py fill aetherium          # ghcr.token, the SinoTrade account an
 helmfile apply -l app=aetherium           # ClickHouse, Postgres, market-tap, the backup
 ```
 
-After every install and upgrade, the Job `clickhouse-schema` creates what's missing of the tables and views in `apps/aetherium/chart/files/clickhouse/` (a table that exists is left alone; changing one is an `ALTER` by hand). The views are redefined each time, except `tick_futures` and `orderbook_futures`: they're created only if missing, since those names were tables before the cutover, and changing them is a `CREATE OR REPLACE VIEW` by hand. `orderbook` and `tick_data` are rebuilt from market-tap's code, which has no DDL for them: compare them with `SHOW CREATE TABLE` on the old server before importing its data. `tick_fut_sj` and `book_fut_sj` are copies of amt-futures' own DDL (`futures/amt_futures/schema.py`), which creates them too.
+After every install and upgrade, the Job `clickhouse-schema` creates what's missing of the tables and views in `apps/aetherium/chart/files/clickhouse/` (a table that exists is left alone; changing one is an `ALTER` by hand). The views are redefined each time. `orderbook` and `tick_data` are rebuilt from market-tap's code, which has no DDL for them: compare them with `SHOW CREATE TABLE` on the old server before importing its data. `tick_fut_sj` and `book_fut_sj` are copies of amt-futures' own DDL (`futures/amt_futures/schema.py`), which creates them too.
 
 **Images.** All are built from market-tap's repo and pushed by hand; the node is linux/amd64:
 

@@ -7,9 +7,7 @@
 -- Reading 0 as "same as the previous row" works for both. The open interest isn't here after the
 -- cutover (0): it's in futures_oi, from MoneyDJ. Its other columns (settlement and OHLC quotes,
 -- order counts, match quantities) have no counterpart in Shioaji's books: 0.
--- IF NOT EXISTS, not OR REPLACE as for the other views: until the cutover a table had this name.
--- Changing the view is a manual CREATE OR REPLACE VIEW.
-CREATE VIEW IF NOT EXISTS orderbook_futures AS
+CREATE OR REPLACE VIEW orderbook_futures AS
 SELECT
     ts, symbol,
     bid1, bid2, bid3, bid4, bid5, bid1_vol, bid2_vol, bid3_vol, bid4_vol, bid5_vol,
