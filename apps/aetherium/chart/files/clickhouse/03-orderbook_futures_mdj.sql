@@ -1,4 +1,4 @@
--- The futures' order books from MoneyDJ's web feed, up to the 2026-10-24 cutover; it was named
+-- The futures' order books from MoneyDJ's web feed, up to the 2026-10-23 cutover; it was named
 -- orderbook_futures, which is now the view that consumers read (17-orderbook_futures.sql). Since
 -- then the books come from amt-futures (book_fut_sj) and MoneyDJ only gives the open interest
 -- (futures_oi). From market-tap's docs/futures-schema.sql (column rationale and V-field mapping:

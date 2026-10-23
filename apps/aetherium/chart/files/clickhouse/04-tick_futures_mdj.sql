@@ -1,4 +1,4 @@
--- The futures' trades from MoneyDJ's replay, up to the 2026-10-24 cutover; it was named
+-- The futures' trades from MoneyDJ's replay, up to the 2026-10-23 cutover; it was named
 -- tick_futures, which is now the view that consumers read (16-tick_futures.sql). Since then the
 -- trades come from amt-futures (tick_fut_sj). From market-tap's docs/futures-schema.sql. trade_date
 -- is MoneyDJ's: the day the session opens on (a night session belongs to its evening).

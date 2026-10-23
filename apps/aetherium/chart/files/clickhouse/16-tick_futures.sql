@@ -1,6 +1,6 @@
 -- tick_futures: the futures' trades, in the shape every consumer reads (kbar-tick-agg,
 -- replay-segments, hindsight) — MoneyDJ's symbols, prices × 100, its direction codes — across the
--- cutover. The switch is at 2026-10-22 06:00 Taiwan time, two days before the cutover itself: the
+-- cutover. The switch is at 2026-10-22 06:00 Taiwan time, a day before the cutover itself: the
 -- typhoon closure of 10-23 skipped the morning job that would have fetched MoneyDJ's 10-22 night
 -- session, while Shioaji has both of that day's sessions.
 --   before: MoneyDJ's replay (tick_futures_mdj)
