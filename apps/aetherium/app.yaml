@@ -28,6 +28,18 @@ secrets:
   sinotrade.secretKey:
     comment: Its secret key.
     ask: Shioaji Secret Key
+  fubon.id:
+    comment: The ID (身分證字號) amt-stock-trades signs in to Fubon's Neo API with.
+    ask: 富邦 Neo API 登入的身分證字號
+  fubon.apiKey:
+    comment: Its API key, with market data permission only (Fubon's API key page).
+    ask: 富邦 API Key（只開行情權限）
+  fubon.certPassword:
+    comment: The password of its certificate.
+    ask: 富邦憑證密碼
+  fubon.cert:
+    comment: "Its certificate, the .pfx (valid for a year), base64. From the file: base64 < <cert>.pfx | scripts/secret.py set apps.<name>.fubon.cert"
+    ask: 富邦憑證 .pfx 的 base64（改用 base64 < 憑證.pfx | scripts/secret.py set apps.<name>.fubon.cert）
   twcaLocalStorage:
     comment: "The TWCA certificate the login Job presents: the JSON market-tap's export-twca writes (twca-local-storage.json), private key included. From the file: scripts/secret.py set apps.<name>.twcaLocalStorage < twca-local-storage.json"
     ask: twca-local-storage.json 的內容（多行的話改用 scripts/secret.py set apps.<name>.twcaLocalStorage < 檔案）

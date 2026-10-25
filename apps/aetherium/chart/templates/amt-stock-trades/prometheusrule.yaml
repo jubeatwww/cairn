@@ -1,0 +1,28 @@
+{{- if (.Values.infrastructure | default dict).monitoring }}
+# amt-stock-trades' alert (market-tap's k8s/monitoring.yaml), to Discord with the rest. A CronJob has
+# no metrics of its own: kube-state-metrics' Job status.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: amt-stock-trades
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: amt-stock-trades
+      rules:
+        # The latest pass failed: the last of the day with symbols left, or one that couldn't run at
+        # all (the login, the collector, out of time). The latest only, so a pass that succeeds
+        # afterwards, or one run by hand, clears it. Fubon has today's trades only, hence critical:
+        # fix it and run a pass the same day.
+        - alert: AmtStockTradesFailed
+          expr: >-
+            kube_job_status_failed{namespace="{{ .Release.Namespace }}", job_name=~"amt-stock-trades-.*"} > 0
+            and on(job_name) topk(1, kube_job_status_start_time{namespace="{{ .Release.Namespace }}", job_name=~"amt-stock-trades-.*"})
+          labels:
+            severity: critical
+          annotations:
+            summary: "amt-stock-trades pass {{`{{ $labels.job_name }}`}} failed"
+            description: >-
+              kubectl -n {{ .Release.Namespace }} logs job/{{`{{ $labels.job_name }}`}}; once fixed, a pass by hand:
+              kubectl -n {{ .Release.Namespace }} create job --from=cronjob/amt-stock-trades amt-stock-trades-manual-$(date +%s)
+{{- end }}

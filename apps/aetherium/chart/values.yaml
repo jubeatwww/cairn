@@ -1,6 +1,6 @@
 # Defaults for aetherium. Its settings (archivePath) come from apps.aetherium in site.yaml, and its
-# secrets (ghcr.token, sinotrade, twcaLocalStorage) from its section of site.secret.yaml; either can
-# override these too (README "Components and apps").
+# secrets (ghcr.token, sinotrade, fubon, twcaLocalStorage) from its section of site.secret.yaml;
+# either can override these too (README "Components and apps").
 images:
   # market-tap's two images, built from its repo and pushed by hand (both moving tags, pulled again
   # on every start): amt runs the server, amt-login the Job the server starts every trading morning
@@ -14,12 +14,16 @@ images:
   # amt-collector, the one writer of market_trades and market_quotes (market-tap's collector/): a
   # version tag too, like amt-futures.
   amtCollector: ghcr.io/jubeatwww/amt-collector:0.2.0
+  # amt-providers, the sources on the brokers' APIs (market-tap's providers/), one command each:
+  # amt-stock-trades runs it. A version tag too.
+  amtProviders: ghcr.io/jubeatwww/amt-providers:0.3.0
   # The ClickHouse schema and kbar-tick-agg send SQL over HTTP.
   curl: curlimages/curl:8.22.0
   # replay-segments; its packages are pinned in its CronJob.
   python: python:3.11.16-slim-trixie
 imagePullPolicy: Always
-# The images with a version tag (amt-futures, amt-collector): a tag is never pushed again.
+# The images with a version tag (amt-futures, amt-collector, amt-providers): a tag is never pushed
+# again.
 pinnedImagePullPolicy: IfNotPresent
 
 # amt-collector refuses a ReplaceUnits call of more rows than this (RESOURCE_EXHAUSTED; its own
@@ -73,6 +77,13 @@ resources:
       memory: 128Mi
     limits:
       memory: 512Mi
+  # It sends the collector 200,000 rows at a time, a hundred or two megabytes in Python.
+  stockTrades:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
   replaySegments:
     requests:
       cpu: 100m
@@ -80,13 +91,16 @@ resources:
     limits:
       memory: 512Mi
 
-# The two CronJobs, in UTC: Taiwan is UTC+8, with no daylight saving time.
+# The CronJobs, in UTC: Taiwan is UTC+8, with no daylight saving time.
 schedules:
   # 06:40 Taiwan time, after the 06:00 upload of the night session: the last three days of
   # tick_futures, aggregated again into kbar_1m.
   kbarTickAgg: "40 22 * * *"
   # 06:50 Taiwan time, after kbar-tick-agg: amt.replay_segments, the replayable sessions.
   replaySegments: "50 22 * * *"
+  # 14:40, 17:40 and 20:40 Taiwan time on weekdays: amt-stock-trades' three passes, once Fubon has
+  # the 14:30 closing auction.
+  stockTrades: "40 6,9,12 * * 1-5"
 
 # ConfigMap amt-trading-calendar's first content: the weekdays the market is closed (holidays, make-up
 # days, settlement-only days), from TWSE's schedule (openapi.twse.com.tw/v1/holidaySchedule/
