@@ -40,6 +40,8 @@ spec:
           imagePullPolicy: {{ .Values.pinnedImagePullPolicy }}
           env:
             {{- include "aetherium.clickhouseEnv" . | nindent 12 }}
+            - name: AMT_COLLECTOR_MAX_REPLACE_ROWS
+              value: {{ .Values.collectorMaxReplaceRows | quote }}
           ports:
             - name: grpc
               containerPort: 50051
