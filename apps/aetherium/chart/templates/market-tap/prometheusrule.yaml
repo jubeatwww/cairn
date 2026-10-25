@@ -33,6 +33,17 @@ spec:
           annotations:
             summary: "orderbook collection is live but silent"
             description: "The WebSocket session is likely dead or the feed stalled; quotes are being lost."
+        # The stock books written during the session aren't reaching amt-collector (a file every 10
+        # seconds): nothing is lost, the files stay and the upload after the session sends them, but
+        # the readers don't see them yet. Usually amt-collector is down (its own alerts).
+        - alert: AmtOrderbookCollectorBacklog
+          expr: amt_ob_collector_pending_files > 6 and on() (amt_ob_collection_active == 1)
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{`{{ $value }}`}} stock book file(s) not taken by amt-collector"
+            description: "kubectl -n {{ .Release.Namespace }} logs deploy/amt-server | grep 'ob→collector'"
         # The server is down, or its metrics endpoint is.
         - alert: AmtMetricsAbsent
           expr: absent(up{job="amt-server-metrics"}) or up{job="amt-server-metrics"} == 0

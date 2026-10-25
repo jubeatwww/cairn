@@ -2,10 +2,12 @@
 # secrets (ghcr.token, sinotrade, fubon, twcaLocalStorage) from its section of site.secret.yaml;
 # either can override these too (README "Components and apps").
 images:
-  # market-tap's two images, built from its repo and pushed by hand (both moving tags, pulled again
-  # on every start): amt runs the server, amt-login the Job the server starts every trading morning
-  # to sign in (node and Chromium).
-  amt: ghcr.io/jubeatwww/amt:latest
+  # market-tap's two images, built from its repo and pushed by hand, pulled again on every start
+  # (imagePullPolicy): amt runs the server, amt-login the Job the server starts every trading
+  # morning to sign in (node and Chromium). amt has a version tag since it hands its quotes to
+  # amt-collector (market-tap's P3), so a rebuild can't change that unannounced; amt-login's is
+  # still moving.
+  amt: ghcr.io/jubeatwww/amt:0.2.0
   amtLogin: ghcr.io/jubeatwww/amt-login:latest
   # amt-providers, the sources on the brokers' APIs (market-tap's providers/), one command each:
   # amt-futures and amt-stock-trades run it. A version tag, pulled once (pinnedImagePullPolicy):

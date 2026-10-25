@@ -1,8 +1,9 @@
--- Stock five-level order book, one row per update (amt orderbook, uploaded as JSONEachRow).
--- Rebuilt: market-tap's repo doesn't have this table's DDL. Columns from its upload code
--- (src/upload/orderbook.rs), codecs and partitioning as orderbook_futures, which copied them from
--- here (docs/futures-design.md). Compare with SHOW CREATE TABLE on the old server before importing.
-CREATE TABLE IF NOT EXISTS orderbook
+-- The stocks' five-level books from MoneyDJ's web feed as amt-server uploaded them, one row per push,
+-- until market-tap's P3; it was named orderbook, which is now the view across this and
+-- market_quotes (18-orderbook.sql). Sparse: a column a push didn't carry is 0. Rebuilt: market-tap's
+-- repo didn't have this table's DDL. Columns from its upload code then (src/upload/orderbook.rs),
+-- codecs and partitioning as orderbook_futures, which copied them from here (docs/futures-design.md).
+CREATE TABLE IF NOT EXISTS orderbook_mdj
 (
     ts DateTime64(3)              CODEC(Delta(8), ZSTD(3)),
     symbol LowCardinality(String) CODEC(ZSTD(3)),

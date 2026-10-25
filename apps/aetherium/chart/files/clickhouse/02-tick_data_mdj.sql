@@ -1,10 +1,10 @@
--- Stock trades (amt tick, uploaded as JSONEachRow with ts as epoch seconds).
--- Rebuilt: market-tap's repo doesn't have this table's DDL. Columns from its upload code
--- (src/upload/tick.rs), codecs and partitioning as tick_futures. ts is DateTime: the monthly
--- archive filters it with toYYYYMM(ts), and hindsight, which treats it as epoch seconds (UInt32),
--- reads and compares a DateTime the same way. Compare with SHOW CREATE TABLE on the old server
--- before importing; an INSERT ... SELECT converts UInt32 seconds to DateTime by itself.
-CREATE TABLE IF NOT EXISTS tick_data
+-- The stocks' trades from MoneyDJ's post-market replay as amt-server uploaded them, until market-tap's
+-- P3; it was named tick_data, which is now the view across this and market_trades
+-- (19-tick_data.sql). Rebuilt: market-tap's repo didn't have this table's DDL. Columns from its
+-- upload code then (src/upload/tick.rs), codecs and partitioning as tick_futures. ts is DateTime:
+-- the monthly archive filters it with toYYYYMM(ts), and hindsight, which treats it as epoch seconds
+-- (UInt32), reads and compares a DateTime the same way.
+CREATE TABLE IF NOT EXISTS tick_data_mdj
 (
     ts        DateTime               CODEC(Delta(4), ZSTD(3)),
     symbol    LowCardinality(String) CODEC(ZSTD(3)),

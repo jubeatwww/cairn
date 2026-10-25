@@ -1,7 +1,8 @@
 # amt server: one process that schedules everything by itself, in Taiwan time on trading days (the
 # calendar's holidays left out): the morning login (a Job, from images.amtLogin), the stocks' quotes
 # and the futures' open interest over the day and night sessions (their books and trades are
-# amt-futures'), the uploads to ClickHouse, the monthly archive and dedup audit. Recreate and one
+# amt-futures'), the hand-over of the stocks' quotes to amt-collector and the upload of the open
+# interest to ClickHouse, the monthly archive and dedup audit. Recreate and one
 # replica: only one process may hold /data. The grace period lets a running collection flush before
 # it stops.
 apiVersion: apps/v1
@@ -38,6 +39,10 @@ spec:
               value: /archive
             - name: AMT_LOGIN_IMAGE
               value: {{ .Values.images.amtLogin }}
+            # The stocks' books and trades go to amt-collector (the books as they're written, the
+            # replay after the session); only the futures' open interest is still written directly.
+            - name: AMT_COLLECTOR_ADDR
+              value: amt-collector:50051
           ports:
             - name: metrics
               containerPort: 9090
