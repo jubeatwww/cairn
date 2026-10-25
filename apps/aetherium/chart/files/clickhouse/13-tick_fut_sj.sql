@@ -1,8 +1,8 @@
--- The futures' trades from Shioaji's API (market-tap's amt-futures), since 2026-10-19: origin
--- 'stream' as collected, 'hist' from Shioaji's history after the day session (the authoritative
--- one). amt-futures creates this table itself; it's here too so that 16-tick_futures.sql can be
--- created on a fresh install. Copied from market-tap's futures/amt_futures/schema.py (TICK_DDL):
--- keep the two the same.
+-- The futures' trades from Shioaji's API as market-tap's amt-futures wrote them from 2026-10-19 until
+-- it moved to amt-collector (market-tap's P2), which copied them into market_trades: origin 'stream'
+-- as collected, 'hist' from Shioaji's history after the day session. Nothing writes or reads it
+-- since; it goes, with this file, once that's confirmed. Copied from amt-futures' DDL before P2
+-- (market-tap's futures/amt_futures/schema.py, TICK_DDL).
 CREATE TABLE IF NOT EXISTS tick_fut_sj
 (
     ts                 DateTime64(6, 'UTC')   CODEC(Delta(8), ZSTD(3)),

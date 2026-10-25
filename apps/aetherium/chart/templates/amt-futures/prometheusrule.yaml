@@ -41,8 +41,8 @@ spec:
             severity: critical
           annotations:
             summary: "amt-futures hit its daily login cap and is not collecting"
-        # The main loop is stuck in a ClickHouse or SDK call: quotes still arrive, nothing writes
-        # them out.
+        # The main loop is stuck in a collector or SDK call: quotes still arrive, nothing hands them
+        # over.
         - alert: AmtFuturesLoopStalled
           expr: (time() - amt_fut_loop_heartbeat_timestamp_seconds) > 180
           for: 2m
@@ -56,23 +56,25 @@ spec:
             severity: warning
           annotations:
             summary: "amt-futures {{`{{ $labels.kind }}`}} callback is throwing: SDK fields changed?"
-        # Batches ClickHouse didn't take wait in /state/spool (PVC amt-futures-state).
-        - alert: AmtFuturesSpoolBacklog
-          expr: amt_fut_spool_files > 0
+        # Batches amt-collector didn't take wait in /state/outbox (PVC amt-futures-state) and go again
+        # in order: nothing is lost, but the readers don't see them yet.
+        - alert: AmtFuturesOutboxBacklog
+          expr: amt_fut_outbox_files > 0
           for: 15m
           labels:
             severity: warning
           annotations:
-            summary: "amt-futures has {{`{{ $value }}`}} unflushed batch file(s)"
-            description: "ClickHouse writes are failing; the batches wait on PVC amt-futures-state."
-        # A batch the server keeps refusing is set aside as *.bad, for a person to look at.
-        - alert: AmtFuturesSpoolQuarantined
-          expr: increase(amt_fut_spool_quarantined_total[1h]) > 0 or increase(amt_fut_rows_dropped_total[1h]) > 0
+            summary: "amt-futures has {{`{{ $value }}`}} batch file(s) the collector hasn't taken"
+            description: "amt-collector is unreachable or refusing them: kubectl -n {{ .Release.Namespace }} logs deploy/amt-collector."
+        # A batch the collector refuses (a row that breaks its definition: a bug) is set aside as
+        # *.bad, for a person to look at; one that couldn't be written to disk is lost.
+        - alert: AmtFuturesOutboxQuarantined
+          expr: increase(amt_fut_outbox_quarantined_total[1h]) > 0 or increase(amt_fut_rows_dropped_total[1h]) > 0
           labels:
             severity: critical
           annotations:
-            summary: "amt-futures quarantined or dropped batches"
-            description: "Look for *.bad under /state/spool in the amt-futures pod."
+            summary: "amt-futures set aside or dropped batches"
+            description: "Look for *.bad under /state/outbox in the amt-futures pod; once fixed, rename it back to *.pb to send it again."
         # The ticks from Shioaji's history weren't written (failed, incomplete, or over the quota).
         - alert: AmtFuturesReconcileTrouble
           expr: increase(amt_fut_reconcile_runs_total{status=~"failed|quota|incomplete"}[6h]) > 0

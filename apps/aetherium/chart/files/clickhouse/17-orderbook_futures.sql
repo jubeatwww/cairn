@@ -2,8 +2,9 @@
 -- (replay-segments, hindsight) — MoneyDJ's symbols and columns, prices × 100 — across the
 -- cutover. The switch is at 2026-10-22 06:00 Taiwan time, as for tick_futures (16-tick_futures.sql):
 --   before: MoneyDJ's web feed (orderbook_futures_mdj), sparse: a column a push didn't carry is 0
---   after:  Shioaji's API (book_fut_sj, market-tap's amt-futures), every row a full book, the
---           pre-open trial-match books included (MoneyDJ's had them too)
+--   after:  Shioaji's API, market-tap's amt-futures through amt-collector (market_quotes, asset
+--           'futures', source 'sinopac'; book_fut_sj until market-tap's P2, which copied it over),
+--           every row a full book, the pre-open trial-match books included (MoneyDJ's had them too)
 -- Reading 0 as "same as the previous row" works for both. The open interest isn't here after the
 -- cutover (0): it's in futures_oi, from MoneyDJ. Its other columns (settlement and OHLC quotes,
 -- order counts, match quantities) have no counterpart in Shioaji's books: 0.
@@ -24,16 +25,17 @@ SELECT
     toUInt32(round(bid1 * 100)) AS bid1, toUInt32(round(bid2 * 100)) AS bid2,
     toUInt32(round(bid3 * 100)) AS bid3, toUInt32(round(bid4 * 100)) AS bid4,
     toUInt32(round(bid5 * 100)) AS bid5,
-    bid1_vol, bid2_vol, bid3_vol, bid4_vol, bid5_vol,
+    bid1_qty AS bid1_vol, bid2_qty AS bid2_vol, bid3_qty AS bid3_vol, bid4_qty AS bid4_vol, bid5_qty AS bid5_vol,
     toUInt32(round(ask1 * 100)) AS ask1, toUInt32(round(ask2 * 100)) AS ask2,
     toUInt32(round(ask3 * 100)) AS ask3, toUInt32(round(ask4 * 100)) AS ask4,
     toUInt32(round(ask5 * 100)) AS ask5,
-    ask1_vol, ask2_vol, ask3_vol, ask4_vol, ask5_vol,
+    ask1_qty AS ask1_vol, ask2_qty AS ask2_vol, ask3_qty AS ask3_vol, ask4_qty AS ask4_vol, ask5_qty AS ask5_vol,
     toUInt32(0) AS open_interest, toInt32(0) AS oi_change, toUInt32(0) AS settlement_price,
     toUInt32(0) AS prev_close, toUInt32(0) AS open_price, toUInt32(0) AS high_price,
     toUInt32(0) AS low_price, toInt32(0) AS mark_bias,
     toUInt32(0) AS bid_order_count, toUInt32(0) AS bid_order_size,
     toUInt32(0) AS ask_order_count, toUInt32(0) AS ask_order_size,
     toUInt32(0) AS buy_match_qty, toUInt32(0) AS sell_match_qty
-FROM book_fut_sj
-WHERE ts >= toDateTime64('2026-10-21 22:00:00', 6, 'UTC')
+FROM market_quotes
+WHERE asset = 'futures' AND source = 'sinopac'
+  AND ts >= toDateTime64('2026-10-21 22:00:00', 6, 'UTC')

@@ -1,12 +1,14 @@
-# amt-futures: the TX / MX / TMF futures quotes (ticks and five-level book) over Shioaji's API, into
-# ClickHouse tables of its own (tick_fut_sj, book_fut_sj, which it creates). Design: market-tap's
-# docs/futures-api-design.md. It runs alongside amt-server's web feed, which keeps the futures'
-# intraday open interest that no API has.
+# amt-futures: the TX / MX / TMF futures quotes (ticks and five-level book) over Shioaji's API,
+# handed to amt-collector as market_trades / market_quotes (asset 'futures', source 'sinopac'): the
+# stream once a second with Append, the ticks from Shioaji's history after the day session with
+# ReplaceUnits. A batch the collector doesn't take waits on /state (the outbox) and goes again in
+# order. Design: market-tap's docs/futures-api-design.md and docs/collector-design.md. It runs
+# alongside amt-server's web feed, which keeps the futures' intraday open interest that no API has.
 #
 # One process is one login: it exits for a fresh one every morning at 07:30, when a session goes
 # down or the stream goes quiet, and the kubelet starts it again, so a restart a day is normal.
 # Recreate and one replica: Shioaji allows five connections per person, and a rolling update would
-# hold two. The grace period lets it flush to ClickHouse and log out.
+# hold two. The grace period lets it hand its last batch over and log out.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -39,15 +41,16 @@ spec:
         fsGroup: 10001
       containers:
         - name: collector
-          image: {{ .Values.images.amtFutures }}
+          image: {{ .Values.images.amtProviders }}
           imagePullPolicy: {{ .Values.pinnedImagePullPolicy }}
-          args: [run]
+          args: [sinopac-futures, run]
           envFrom:
             # SJ_API_KEY, SJ_SECRET_KEY
             - secretRef:
                 name: sj-api
           env:
-            {{- include "aetherium.clickhouseEnv" . | nindent 12 }}
+            - name: AMT_COLLECTOR_ADDR
+              value: amt-collector:50051
             - name: AMT_HOLIDAYS_FILE
               value: /etc/amt/holidays.txt
           ports:
@@ -60,7 +63,7 @@ spec:
             capabilities:
               drop: [ALL]
           volumeMounts:
-            # Its working directory (the image's): spool, login count, the SDK's files.
+            # Its working directory (the image's): outbox, login count, the SDK's files.
             - name: state
               mountPath: /state
             - name: calendar

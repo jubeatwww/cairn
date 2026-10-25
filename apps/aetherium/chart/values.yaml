@@ -7,23 +7,20 @@ images:
   # to sign in (node and Chromium).
   amt: ghcr.io/jubeatwww/amt:latest
   amtLogin: ghcr.io/jubeatwww/amt-login:latest
-  # amt-futures, the futures collector on Shioaji's API (market-tap's futures/): a version tag,
-  # pulled once (pinnedImagePullPolicy). It restarts itself every morning, and mustn't pick up an
-  # unreviewed build then; upgrading is changing this tag.
-  amtFutures: ghcr.io/jubeatwww/amt-futures:0.1.2
-  # amt-collector, the one writer of market_trades and market_quotes (market-tap's collector/): a
-  # version tag too, like amt-futures.
-  amtCollector: ghcr.io/jubeatwww/amt-collector:0.2.0
   # amt-providers, the sources on the brokers' APIs (market-tap's providers/), one command each:
-  # amt-stock-trades runs it. A version tag too.
-  amtProviders: ghcr.io/jubeatwww/amt-providers:0.3.0
+  # amt-futures and amt-stock-trades run it. A version tag, pulled once (pinnedImagePullPolicy):
+  # amt-futures restarts itself every morning, and mustn't pick up an unreviewed build then;
+  # upgrading is changing this tag.
+  amtProviders: ghcr.io/jubeatwww/amt-providers:0.4.0
+  # amt-collector, the one writer of market_trades and market_quotes (market-tap's collector/): a
+  # version tag too.
+  amtCollector: ghcr.io/jubeatwww/amt-collector:0.2.0
   # The ClickHouse schema and kbar-tick-agg send SQL over HTTP.
   curl: curlimages/curl:8.22.0
   # replay-segments; its packages are pinned in its CronJob.
   python: python:3.11.16-slim-trixie
 imagePullPolicy: Always
-# The images with a version tag (amt-futures, amt-collector, amt-providers): a tag is never pushed
-# again.
+# The images with a version tag (amt-providers, amt-collector): a tag is never pushed again.
 pinnedImagePullPolicy: IfNotPresent
 
 # amt-collector refuses a ReplaceUnits call of more rows than this (RESOURCE_EXHAUSTED; its own
@@ -41,13 +38,13 @@ storage:
   data:
     size: 10Gi
     storageClass: lvm
-  # amt-futures' /state: the batches ClickHouse hasn't taken yet (its spool, which only grows while
-  # ClickHouse is down), its login count, the SDK's log and token pool.
+  # amt-futures' /state: the batches amt-collector hasn't taken yet (its outbox, which only grows
+  # while the collector is unreachable), its login count, the SDK's log and token pool.
   futures:
     size: 5Gi
     storageClass: lvm
   # amt-collector's /state: its write-ahead log, the stream it acknowledged that isn't in ClickHouse
-  # yet. Like the spool, it only grows while ClickHouse is down.
+  # yet. It only grows while ClickHouse is down.
   collector:
     size: 5Gi
     storageClass: lvm
@@ -60,7 +57,8 @@ resources:
       memory: 512Mi
     limits:
       memory: 1Gi
-  # Three contracts: a small Python process. Batches waiting for ClickHouse go to disk, not memory.
+  # Three contracts: a small Python process. Batches the collector hasn't taken go to disk, not
+  # memory.
   futures:
     requests:
       cpu: 100m

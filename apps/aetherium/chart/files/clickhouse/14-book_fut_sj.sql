@@ -1,7 +1,8 @@
--- The futures' five-level books from Shioaji's API (market-tap's amt-futures), since 2026-10-19:
--- every row a full book, prices in index points. amt-futures creates this table itself; it's here
--- too so that 17-orderbook_futures.sql can be created on a fresh install. Copied from market-tap's
--- futures/amt_futures/schema.py (BOOK_DDL): keep the two the same.
+-- The futures' five-level books from Shioaji's API as market-tap's amt-futures wrote them from
+-- 2026-10-19 until it moved to amt-collector (market-tap's P2), which copied them into
+-- market_quotes: every row a full book, prices in index points. Nothing writes or reads it since;
+-- it goes, with this file, once that's confirmed. Copied from amt-futures' DDL before P2
+-- (market-tap's futures/amt_futures/schema.py, BOOK_DDL).
 CREATE TABLE IF NOT EXISTS book_fut_sj
 (
     ts              DateTime64(6, 'UTC')   CODEC(Delta(8), ZSTD(3)),

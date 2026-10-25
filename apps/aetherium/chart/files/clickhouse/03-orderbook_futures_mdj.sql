@@ -1,7 +1,7 @@
 -- The futures' order books from MoneyDJ's web feed, up to the 2026-10-23 cutover; it was named
 -- orderbook_futures, which is now the view that consumers read (17-orderbook_futures.sql). Since
--- then the books come from amt-futures (book_fut_sj) and MoneyDJ only gives the open interest
--- (futures_oi). From market-tap's docs/futures-schema.sql (column rationale and V-field mapping:
+-- then the books come from amt-futures (market_quotes; book_fut_sj before market-tap's P2) and
+-- MoneyDJ only gives the open interest (futures_oi). From market-tap's docs/futures-schema.sql (column rationale and V-field mapping:
 -- docs/futures-design.md); sparse: a column a push didn't carry is 0.
 CREATE TABLE IF NOT EXISTS orderbook_futures_mdj
 (
