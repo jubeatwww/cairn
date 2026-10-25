@@ -11,7 +11,7 @@ images:
   # amt-futures and amt-stock-trades run it. A version tag, pulled once (pinnedImagePullPolicy):
   # amt-futures restarts itself every morning, and mustn't pick up an unreviewed build then;
   # upgrading is changing this tag.
-  amtProviders: ghcr.io/jubeatwww/amt-providers:0.4.0
+  amtProviders: ghcr.io/jubeatwww/amt-providers:0.4.1
   # amt-collector, the one writer of market_trades and market_quotes (market-tap's collector/): a
   # version tag too.
   amtCollector: ghcr.io/jubeatwww/amt-collector:0.2.0
