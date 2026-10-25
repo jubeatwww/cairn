@@ -20,12 +20,13 @@ storage:
   storageClass: lvm
 
 # ClickHouse sizes its caches and its memory limit (90% of it) from the container's limit.
+# market-tap's peaked at 1.3Gi over the week before 2026-10-25.
 resources:
   requests:
     cpu: 250m
     memory: 1Gi
   limits:
-    memory: 4Gi
+    memory: 3584Mi
 
 # Namespaces allowed in through the NetworkPolicy, besides the app's own.
 operatorNamespace: clickhouse-system   # infrastructure/clickhouse: the operator and its exporter
