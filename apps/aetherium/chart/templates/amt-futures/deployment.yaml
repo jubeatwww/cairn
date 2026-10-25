@@ -40,7 +40,7 @@ spec:
       containers:
         - name: collector
           image: {{ .Values.images.amtFutures }}
-          imagePullPolicy: {{ .Values.futuresImagePullPolicy }}
+          imagePullPolicy: {{ .Values.pinnedImagePullPolicy }}
           args: [run]
           envFrom:
             # SJ_API_KEY, SJ_SECRET_KEY

@@ -302,14 +302,15 @@ Run the port-forward on a computer whose kubectl reaches the cluster (the node's
 
 ## Aetherium
 
-`apps/aetherium` runs market-tap (from the Aetherium-Trader repos), which collects Taiwan stock and futures quotes in two processes:
+`apps/aetherium` runs market-tap (from the Aetherium-Trader repos), which collects Taiwan stock and futures quotes:
 
 - `amt-server` takes the stocks from SinoTrade's web feed. It schedules everything itself, in Taiwan time and on trading days only: at 08:00 it starts a Job that signs in with the account and TWCA certificate from `site.secret.yaml`, then collects the stocks' order books over the day session and their trades after it, uploads them to ClickHouse, and once a month moves the partitions older than a year to Parquet files on the NAS (`apps.aetherium.archivePath`). From the same feed it keeps the futures' intraday open interest, day and night sessions, which no API has (`futures_oi`, uploaded at 06:00).
 - `amt-futures` takes the futures (TX, MX, TMF) from SinoPac's Shioaji API, with an API key: always running, it subscribes before each session, writes their trades and order books (`tick_fut_sj`, `book_fut_sj`), and after the day session backfills the trades it missed from Shioaji's history.
+- `amt-collector` is the one writer of `market_trades` and `market_quotes`, every source's trades and books in one shape, which the sources move to one at a time (market-tap's `docs/collector-design.md`). A source hands it its quotes over gRPC: a stream, acknowledged once it's in a write-ahead log on the collector's volume, or a day's complete data, which replaces what's there.
 
 Until the cutover of 2026-10-23 the web feed collected the futures' books and trades too; those are in `tick_futures_mdj` and `orderbook_futures_mdj`. The old names, `tick_futures` and `orderbook_futures`, are views across both sources in the old shape (MoneyDJ's symbols, prices × 100), so the consumers didn't change. Two CronJobs read them every morning: `kbar-tick-agg` (06:40, 1-minute bars from the futures trades) and `replay-segments` (06:50, the sessions complete enough to replay, in Postgres). Design and the parallel run before the cutover: market-tap's `docs/futures-api-design.md`. The quotes live in the namespace's [ClickHouse](#clickhouse), the task log in its [Postgres](#postgres) (schema `amt`).
 
-A day not collected is lost for good, so `AmtOrderbookSilent` (collecting but no push received for 10 minutes) and `AmtFuturesSilent` (a contract's book quiet for 5 minutes in a session) are critical alerts; the rest of the `amt` and `amt-futures` groups are mostly warnings.
+A day not collected is lost for good, so `AmtOrderbookSilent` (collecting but no push received for 10 minutes) and `AmtFuturesSilent` (a contract's book quiet for 5 minutes in a session) are critical alerts, as are `amt-collector`'s for data it holds but can't write; the rest of the `amt`, `amt-futures` and `amt-collector` groups are warnings.
 
 **Install.** The certificate is a JSON file (market-tap's `export-twca` writes it, private key included), so it goes in from the file:
 
@@ -319,7 +320,7 @@ scripts/secret.py fill aetherium          # ghcr.token, the SinoTrade account an
 helmfile apply -l app=aetherium           # ClickHouse, Postgres, market-tap, the backup
 ```
 
-After every install and upgrade, the Job `clickhouse-schema` creates what's missing of the tables and views in `apps/aetherium/chart/files/clickhouse/` (a table that exists is left alone; changing one is an `ALTER` by hand). The views are redefined each time. `orderbook` and `tick_data` are rebuilt from market-tap's code, which has no DDL for them: compare them with `SHOW CREATE TABLE` on the old server before importing its data. `tick_fut_sj` and `book_fut_sj` are copies of amt-futures' own DDL (`futures/amt_futures/schema.py`), which creates them too.
+After every install and upgrade, the Job `clickhouse-schema` creates what's missing of the tables and views in `apps/aetherium/chart/files/clickhouse/` (a table that exists is left alone; changing one is an `ALTER` by hand). The views are redefined each time. `orderbook` and `tick_data` are rebuilt from market-tap's code, which has no DDL for them: compare them with `SHOW CREATE TABLE` on the old server before importing its data. `tick_fut_sj` and `book_fut_sj` are copies of amt-futures' own DDL (`futures/amt_futures/schema.py`), which creates them too. `market_trades` and `market_quotes` are copies of market-tap's `schema/market.sql`; amt-collector doesn't create them, it checks their columns when it starts.
 
 **Images.** All are built from market-tap's repo and pushed by hand; the node is linux/amd64:
 
@@ -329,7 +330,7 @@ docker buildx build --platform linux/amd64 --target login -t ghcr.io/jubeatwww/a
 kubectl -n aetherium rollout restart deploy/amt-server     # the login Job pulls its image each morning
 ```
 
-`amt-futures` has a version tag instead, so its daily restart never picks up a new build: build `futures/` as `ghcr.io/jubeatwww/amt-futures:<version>`, then set `images.amtFutures` in the chart's `values.yaml` and apply.
+`amt-futures` and `amt-collector` have a version tag instead, so a restart never picks up a new build: build `futures/` as `ghcr.io/jubeatwww/amt-futures:<version>`, or `collector/` as `ghcr.io/jubeatwww/amt-collector:<version>` (`-f collector/Dockerfile`, from the repo's root), then set `images.amtFutures` or `images.amtCollector` in the chart's `values.yaml` and apply.
 
 **Trading calendar.** ConfigMap `amt-trading-calendar` lists the weekdays the market is closed, one `YYYY-MM-DD` per line. It's written from `holidays` in the chart's `values.yaml` on the first install only; after that it's edited in the cluster, and helmfile keeps it as it is: `kubectl -n aetherium edit configmap amt-trading-calendar`. Add a typhoon day the morning it's announced, and next year's closures when TWSE publishes them (https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule, usually in December).
 

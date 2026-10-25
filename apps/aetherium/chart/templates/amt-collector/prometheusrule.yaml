@@ -1,0 +1,55 @@
+{{- if (.Values.infrastructure | default dict).monitoring }}
+# amt-collector's alerts (market-tap's k8s/monitoring.yaml), to Discord with the rest. The stream it
+# acknowledged is on its volume, so most of these are data late, not lost.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: amt-collector
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: amt-collector
+      rules:
+        # The log isn't reaching ClickHouse: nothing is lost, but the readers don't see it, and the
+        # volume fills.
+        - alert: AmtCollectorFlushStalled
+          expr: amt_collector_wal_pending_files > 0 and (time() - amt_collector_last_flush_timestamp_seconds) > 300
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "amt-collector has not written its WAL to ClickHouse for 5+ minutes"
+            description: "kubectl -n {{ .Release.Namespace }} logs deploy/amt-collector, for [flush] errors."
+        # The tables don't match market-tap's schema/market.sql: the stream waits in the log and
+        # every ReplaceUnits is refused until someone fixes them (files/clickhouse/15a, 15b).
+        - alert: AmtCollectorSchemaMismatch
+          expr: amt_collector_schema_ok == 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "market_trades / market_quotes don't match market-tap's schema/market.sql"
+        # ClickHouse keeps refusing a batch (not unreachable): moved to /state/wal/bad/, for a person
+        # to fix and move back to pending/.
+        - alert: AmtCollectorWalQuarantined
+          expr: increase(amt_collector_wal_quarantined_total[1h]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "amt-collector moved WAL files aside as bad"
+        # A replaced unit didn't count up after the write. It's deleted again, and the provider's
+        # retry writes it anew.
+        - alert: AmtCollectorReplaceVerifyFailed
+          expr: increase(amt_collector_replace_calls_total{result="verify_failed"}[1h]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "a ReplaceUnits call did not land whole"
+        - alert: AmtCollectorMetricsAbsent
+          expr: absent(up{job="amt-collector"}) or up{job="amt-collector"} == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "amt-collector metrics endpoint is unreachable"
+{{- end }}

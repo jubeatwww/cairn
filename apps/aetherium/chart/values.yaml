@@ -8,15 +8,19 @@ images:
   amt: ghcr.io/jubeatwww/amt:latest
   amtLogin: ghcr.io/jubeatwww/amt-login:latest
   # amt-futures, the futures collector on Shioaji's API (market-tap's futures/): a version tag,
-  # pulled once (futuresImagePullPolicy). It restarts itself every morning, and mustn't pick up an
+  # pulled once (pinnedImagePullPolicy). It restarts itself every morning, and mustn't pick up an
   # unreviewed build then; upgrading is changing this tag.
   amtFutures: ghcr.io/jubeatwww/amt-futures:0.1.2
+  # amt-collector, the one writer of market_trades and market_quotes (market-tap's collector/): a
+  # version tag too, like amt-futures.
+  amtCollector: ghcr.io/jubeatwww/amt-collector:0.2.0
   # The ClickHouse schema and kbar-tick-agg send SQL over HTTP.
   curl: curlimages/curl:8.22.0
   # replay-segments; its packages are pinned in its CronJob.
   python: python:3.11.16-slim-trixie
 imagePullPolicy: Always
-futuresImagePullPolicy: IfNotPresent
+# The images with a version tag (amt-futures, amt-collector): a tag is never pushed again.
+pinnedImagePullPolicy: IfNotPresent
 
 # Pulls the private images (Secret ghcr-pull). token: site.secret.yaml.
 ghcr:
@@ -32,6 +36,11 @@ storage:
   # amt-futures' /state: the batches ClickHouse hasn't taken yet (its spool, which only grows while
   # ClickHouse is down), its login count, the SDK's log and token pool.
   futures:
+    size: 5Gi
+    storageClass: lvm
+  # amt-collector's /state: its write-ahead log, the stream it acknowledged that isn't in ClickHouse
+  # yet. Like the spool, it only grows while ClickHouse is down.
+  collector:
     size: 5Gi
     storageClass: lvm
 
@@ -50,6 +59,13 @@ resources:
       memory: 256Mi
     limits:
       memory: 512Mi
+  # A ReplaceUnits call holds its rows in memory, two million at most.
+  collector:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 2Gi
   replaySegments:
     requests:
       cpu: 100m

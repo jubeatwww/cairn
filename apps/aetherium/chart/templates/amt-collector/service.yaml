@@ -1,0 +1,19 @@
+# The providers reach the collector at amt-collector:50051 (gRPC without TLS, from this namespace),
+# Prometheus its metrics. Its name is the job label the alerts read.
+apiVersion: v1
+kind: Service
+metadata:
+  name: amt-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: amt-collector
+spec:
+  selector:
+    app.kubernetes.io/name: amt-collector
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+    - name: metrics
+      port: 9092
+      targetPort: metrics
