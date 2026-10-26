@@ -1,5 +1,5 @@
 {{- if (.Values.infrastructure | default dict).monitoring }}
-# amt-stock-trades' alert (market-tap's k8s/monitoring.yaml), to Discord with the rest. A CronJob has
+# amt-stock-trades' alert, to Discord with the rest. A CronJob has
 # no metrics of its own: kube-state-metrics' Job status.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule

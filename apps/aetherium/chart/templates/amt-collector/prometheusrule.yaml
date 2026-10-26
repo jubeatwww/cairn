@@ -1,5 +1,5 @@
 {{- if (.Values.infrastructure | default dict).monitoring }}
-# amt-collector's alerts (market-tap's k8s/monitoring.yaml), to Discord with the rest. The stream it
+# amt-collector's alerts, to Discord with the rest. The stream it
 # acknowledged is on its volume, so most of these are data late, not lost.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule

@@ -1,5 +1,5 @@
 {{- if (.Values.infrastructure | default dict).monitoring }}
-# amt-futures' alerts (market-tap's k8s/monitoring.yaml), to Discord with the rest. An order book
+# amt-futures' alerts, to Discord with the rest. An order book
 # not recorded is lost for good, hence the critical ones; ticks are backfilled from Shioaji's
 # history after each day session (the reconcile at 14:05 and 14:35).
 apiVersion: monitoring.coreos.com/v1
