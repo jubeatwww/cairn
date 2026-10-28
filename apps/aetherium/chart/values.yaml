@@ -67,23 +67,25 @@ resources:
       memory: 256Mi
     limits:
       memory: 512Mi
-  # A ReplaceUnits call holds its rows in memory, a few hundred bytes each. The largest a provider
-  # sends is one futures product's day from Shioaji's history (about 260,000 rows on a busy day) or
-  # 200,000 of Fubon's stock trades; collectorMaxReplaceRows refuses a bigger call before it runs
-  # out of memory. The limit keeps the node's total within its memory.
+  # A ReplaceUnits call holds its rows in memory. The largest a provider sends is one futures
+  # product's day from Shioaji's history (about 260,000 rows on a busy day) or 200,000 stock trades
+  # (Fubon's, and amt-server's from MoneyDJ, both after the session); collectorMaxReplaceRows refuses
+  # a bigger call before it runs out of memory. At 512Mi one call of Fubon's got it killed
+  # (2026-10-28). The limit keeps the node's total within its memory.
   collector:
     requests:
       cpu: 100m
       memory: 128Mi
     limits:
-      memory: 512Mi
-  # It sends the collector 200,000 rows at a time, a hundred or two megabytes in Python.
+      memory: 1Gi
+  # It sends the collector 200,000 rows at a time, about 2Ki each in Python: at 512Mi it was killed
+  # before its first call, at some 190,000 rows (2026-10-28).
   stockTrades:
     requests:
       cpu: 100m
       memory: 256Mi
     limits:
-      memory: 512Mi
+      memory: 1Gi
   replaySegments:
     requests:
       cpu: 100m
