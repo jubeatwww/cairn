@@ -1,0 +1,29 @@
+{{- if (.Values.infrastructure | default dict).monitoring }}
+# amt-sinopac-stock-trades' alert, to Discord with the rest. A CronJob has no metrics of its own:
+# kube-state-metrics' Job status.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: amt-sinopac-stock-trades
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: amt-sinopac-stock-trades
+      rules:
+        # The latest pass failed: it left symbols (a query failed, the quota floor, 08:00), or couldn't
+        # run at all (the login, the collector, out of time). The latest only, so a pass that succeeds
+        # afterwards, or one run by hand, clears it. A warning: Shioaji keeps the history, and the
+        # next passes take the last few trading days again.
+        - alert: AmtSinopacStockTradesFailed
+          expr: >-
+            kube_job_status_failed{namespace="{{ .Release.Namespace }}", job_name=~"amt-sinopac-stock-trades-.*"} > 0
+            and on(job_name) topk(1, kube_job_status_start_time{namespace="{{ .Release.Namespace }}", job_name=~"amt-sinopac-stock-trades-.*"})
+          labels:
+            severity: warning
+          annotations:
+            summary: "amt-sinopac-stock-trades pass {{`{{ $labels.job_name }}`}} failed"
+            description: >-
+              kubectl -n {{ .Release.Namespace }} logs job/{{`{{ $labels.job_name }}`}}; once fixed, a pass by hand
+              (not between 08:00 and 14:00 on a trading day):
+              kubectl -n {{ .Release.Namespace }} create job --from=cronjob/amt-sinopac-stock-trades amt-sinopac-stock-trades-manual-$(date +%s)
+{{- end }}

@@ -10,10 +10,10 @@ images:
   amt: ghcr.io/jubeatwww/amt:0.2.0
   amtLogin: ghcr.io/jubeatwww/amt-login:latest
   # amt-providers, the sources on the brokers' APIs (market-tap's providers/), one command each:
-  # amt-futures and amt-stock-trades run it. A version tag, pulled once (pinnedImagePullPolicy):
-  # amt-futures restarts itself every morning, and mustn't pick up an unreviewed build then;
-  # upgrading is changing this tag.
-  amtProviders: ghcr.io/jubeatwww/amt-providers:0.4.2
+  # amt-futures, amt-stock-trades and amt-sinopac-stock-trades run it. A version tag, pulled once
+  # (pinnedImagePullPolicy): amt-futures restarts itself every morning, and mustn't pick up an
+  # unreviewed build then; upgrading is changing this tag.
+  amtProviders: ghcr.io/jubeatwww/amt-providers:0.5.0
   # amt-collector, the one writer of market_trades and market_quotes (market-tap's collector/): a
   # version tag too.
   amtCollector: ghcr.io/jubeatwww/amt-collector:0.2.0
@@ -86,6 +86,14 @@ resources:
       memory: 256Mi
     limits:
       memory: 1Gi
+  # Shioaji's contract list, and at most 50,000 trades held before they go to the collector: like
+  # amt-futures. It runs in the morning, apart from amt-stock-trades.
+  sinopacStockTrades:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
   replaySegments:
     requests:
       cpu: 100m
@@ -103,6 +111,9 @@ schedules:
   # 14:40, 17:40 and 20:40 Taiwan time on weekdays: amt-stock-trades' three passes, once Fubon has
   # the 14:30 closing auction.
   stockTrades: "40 6,9,12 * * 1-5"
+  # 05:10 and 06:10 Taiwan time, Tuesday to Saturday: amt-sinopac-stock-trades' two passes over the
+  # previous trading days, after the futures' night session closes at 05:00 and done before 08:00.
+  sinopacStockTrades: "10 21,22 * * 1-5"
 
 # ConfigMap amt-trading-calendar's first content: the weekdays the market is closed (holidays, make-up
 # days, settlement-only days), from TWSE's schedule (openapi.twse.com.tw/v1/holidaySchedule/

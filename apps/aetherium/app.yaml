@@ -23,7 +23,7 @@ secrets:
     comment: Its password.
     ask: SinoTrade 登入密碼
   sinotrade.apiKey:
-    comment: The Shioaji API key amt-futures collects futures quotes with (SinoPac's API management page; quotes need no CA certificate).
+    comment: The Shioaji API key amt-futures collects futures quotes with, and amt-sinopac-stock-trades the stocks' trades (SinoPac's API management page; quotes need no CA certificate).
     ask: Shioaji API Key
   sinotrade.secretKey:
     comment: Its secret key.

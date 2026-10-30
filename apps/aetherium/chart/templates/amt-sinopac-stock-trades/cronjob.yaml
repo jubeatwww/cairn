@@ -1,0 +1,77 @@
+# amt-sinopac-stock-trades: the trades of every common stock from Shioaji's history, handed to
+# amt-collector (ReplaceUnits) as market_trades with source 'sinopac', to be compared with Fubon's
+# (amt-stock-trades) and the web feed's. Design: market-tap's docs/collector-design.md.
+#
+# Two passes each morning after a trading day (schedules.sinopacStockTrades), once the futures' night
+# session is over: Shioaji allows only 10 history queries during a session, and doesn't say which
+# hours count, so the passes keep clear of all of them and stop by themselves at 08:00. Shioaji keeps
+# the history, so a pass takes the last few trading days and skips the symbols already written: what
+# one pass leaves, the next, or the next morning's, finishes. It asks amt-collector what's written
+# (UnitCounts) and keeps nothing itself, so it needs no volume. It signs in with amt-futures' API
+# key, one more connection of the five Shioaji allows a person, and stops before the daily query
+# quota gets near the floor amt-futures keeps.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: amt-sinopac-stock-trades
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.schedules.sinopacStockTrades | quote }}
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  # A pass more than 15 minutes late leaves it to the next.
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # A failed pass isn't retried: every retry is another login and more queries on the account
+      # amt-futures uses. The next pass picks up where it stopped.
+      backoffLimit: 0
+      # Over before the next pass, an hour later; running out counts as failed.
+      activeDeadlineSeconds: 3300
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: amt-sinopac-stock-trades
+        spec:
+          restartPolicy: Never
+          # It never calls the Kubernetes API.
+          automountServiceAccountToken: false
+          imagePullSecrets:
+            - name: ghcr-pull
+          # SIGTERM hands the trades fetched so far to the collector and logs out.
+          terminationGracePeriodSeconds: 60
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+          containers:
+            - name: stock-trades
+              image: {{ .Values.images.amtProviders }}
+              imagePullPolicy: {{ .Values.pinnedImagePullPolicy }}
+              args: [sinopac-stock-trades, run]
+              envFrom:
+                # SJ_API_KEY, SJ_SECRET_KEY
+                - secretRef:
+                    name: sj-api
+              env:
+                - name: AMT_COLLECTOR_ADDR
+                  value: amt-collector:50051
+                - name: AMT_HOLIDAYS_FILE
+                  value: /etc/amt/holidays.txt
+              resources:
+                {{- toYaml .Values.resources.sinopacStockTrades | nindent 16 }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - name: calendar
+                  mountPath: /etc/amt
+                  readOnly: true
+          volumes:
+            - name: calendar
+              configMap:
+                name: amt-trading-calendar

@@ -6,8 +6,8 @@
 # the 14:30 closing auction is in. Each pass skips the symbols already written, so the later ones
 # only finish what the earlier left; on a holiday Fubon serves the previous trading day, done
 # already. A pass starting after 20:00 Taiwan time exits 1 with symbols left, as does any pass that
-# can't run at all (the login, the collector); a failed pass isn't retried, the next one is. Its
-# progress is in ClickHouse, so it needs no volume.
+# can't run at all (the login, the collector); a failed pass isn't retried, the next one is. It
+# asks amt-collector what's written (UnitCounts) and keeps nothing itself, so it needs no volume.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
