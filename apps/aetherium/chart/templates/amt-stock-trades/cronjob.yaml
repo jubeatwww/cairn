@@ -15,6 +15,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   schedule: {{ .Values.schedules.stockTrades | quote }}
+  suspend: {{ .Values.suspended.stockTrades }}
   timeZone: Etc/UTC
   concurrencyPolicy: Forbid
   # A pass more than 15 minutes late leaves it to the next.

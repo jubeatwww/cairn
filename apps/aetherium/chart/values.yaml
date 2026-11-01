@@ -115,6 +115,13 @@ schedules:
   # previous trading days, after the futures' night session closes at 05:00 and done before 08:00.
   sinopacStockTrades: "10 21,22 * * 1-5"
 
+# CronJobs kept but not run (their suspend): false runs them again.
+suspended:
+  # Since 2026-11-01: Fubon's history drops whole minutes of trades shortly after the open (10-29
+  # 09:20, 10-30 09:03-09:08), where Shioaji's (amt-sinopac-stock-trades) matched the web feed's for
+  # every stock.
+  stockTrades: true
+
 # ConfigMap amt-trading-calendar's first content: the weekdays the market is closed (holidays, make-up
 # days, settlement-only days), from TWSE's schedule (openapi.twse.com.tw/v1/holidaySchedule/
 # holidaySchedule). It's written once, then edited in the cluster: a typhoon day is decided that
