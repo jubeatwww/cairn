@@ -16,12 +16,21 @@ spec:
       containers:
         - name: mosquitto
           image: {{ .Values.images.mosquitto }}
+          # The config sits where Ubuntu's AppArmor profile for /usr/sbin/mosquitto lets the broker
+          # read it (/etc/mosquitto/mosquitto.conf), since some kernels apply that host profile to
+          # the container's broker too. subPath keeps the file at that exact path, not behind
+          # the ConfigMap's ..data symlink.
+          args:
+            - /usr/sbin/mosquitto
+            - -c
+            - /etc/mosquitto/mosquitto.conf
           ports:
             - name: mqtt
               containerPort: 1883
           volumeMounts:
             - name: config
-              mountPath: /mosquitto/config
+              mountPath: /etc/mosquitto/mosquitto.conf
+              subPath: mosquitto.conf
       volumes:
         - name: config
           configMap:
