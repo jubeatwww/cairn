@@ -9,9 +9,10 @@ path: {{ required "backup.path is required (site.yaml)" (.Values.backup | defaul
 {{- end }}
 
 {{/* Shell lines: wait for the Postgres server. A new pod's first connections are refused for a few
-     seconds, until k3s's network policy controller adds it to the NetworkPolicy's allowed set. */}}
+     seconds, until k3s's network policy controller adds it to the NetworkPolicy's allowed set, and
+     right after the node boots, until the cluster is up (databaseWait). */}}
 {{- define "backup.waitReady" -}}
-for _ in $(seq 30); do pg_isready --quiet && break; sleep 1; done
+for _ in $(seq {{ int .Values.databaseWait }}); do pg_isready --quiet && break; sleep 1; done
 {{- end }}
 
 {{/* libpq settings: the app's database owner, through the read-write Service. */}}

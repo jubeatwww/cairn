@@ -19,6 +19,9 @@ images:
 schedule: "0 4 * * *"
 # Days of backups kept on the NAS.
 keepDays: 14
+# Seconds to wait for the Postgres server before dumping or restoring. Long enough for the cluster
+# to come up when the job starts right after the node boots (a run missed while it was down).
+databaseWait: 600
 
 # The directory on the NAS, under backup.path: the app's or component's name.
 name: ""
