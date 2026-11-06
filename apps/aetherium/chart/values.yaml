@@ -26,8 +26,9 @@ imagePullPolicy: Always
 pinnedImagePullPolicy: IfNotPresent
 
 # amt-collector refuses a ReplaceUnits call of more rows than this (RESOURCE_EXHAUSTED; its own
-# default is two million), so that one fits in resources.collector.
-collectorMaxReplaceRows: 500000
+# default is two million), so that one fits in resources.collector: about 0.4Mi per thousand rows
+# over its ~250Mi at rest (2026-11-06).
+collectorMaxReplaceRows: 1000000
 
 # Pulls the private images (Secret ghcr-pull). token: site.secret.yaml.
 ghcr:
@@ -68,10 +69,11 @@ resources:
     limits:
       memory: 512Mi
   # A ReplaceUnits call holds its rows in memory. The largest a provider sends is one futures
-  # product's day from Shioaji's history (about 260,000 rows on a busy day) or 200,000 stock trades
-  # (Fubon's, and amt-server's from MoneyDJ, both after the session); collectorMaxReplaceRows refuses
-  # a bigger call before it runs out of memory. At 512Mi one call of Fubon's got it killed
-  # (2026-10-28). The limit keeps the node's total within its memory.
+  # product's day from Shioaji's history (TMF: about 300,000 rows on an ordinary day, 708,000 when
+  # the market opened limit-down on 2026-11-06) or 200,000 stock trades (Fubon's, and amt-server's
+  # from MoneyDJ, both after the session); collectorMaxReplaceRows refuses a bigger call before it
+  # runs out of memory. At 512Mi one call of Fubon's got it killed (2026-10-28). The limit keeps the
+  # node's total within its memory.
   collector:
     requests:
       cpu: 100m
