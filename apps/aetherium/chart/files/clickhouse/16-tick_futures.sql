@@ -7,7 +7,8 @@
 --   after:  Shioaji's API, market-tap's amt-futures through amt-collector (market_trades, asset
 --           'futures', source 'sinopac'; tick_fut_sj until market-tap's P2, which copied it over).
 --           Per (product, contract, session) the history if there is one (written after the day
---           session, for the night before and the day), else the stream without the pre-open trial
+--           session, for the night before and the day; the sessions that have it are in
+--           futures_hist_units, up to 5 minutes late), else the stream without the pre-open trial
 --           matches.
 -- A session is keyed by its times, not by trade_date: the stream dates a night session by the
 -- calendar when it starts, the history by the exchange's, and a holiday added in between makes them
@@ -50,7 +51,5 @@ FROM
       AND (origin = 'hist'
            OR (origin = 'stream' AND trial = 0
                AND (symbol, contract, toDate(ts + INTERVAL 2 HOUR), session) NOT IN
-                   (SELECT DISTINCT symbol, contract, toDate(ts + INTERVAL 2 HOUR), session
-                    FROM market_trades
-                    WHERE asset = 'futures' AND source = 'sinopac' AND origin = 'hist')))
+                   (SELECT symbol, contract, day, session FROM futures_hist_units)))
 )
