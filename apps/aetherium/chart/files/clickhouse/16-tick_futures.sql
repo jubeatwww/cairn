@@ -19,15 +19,16 @@
 -- 1 = 內盤 = side 2, 2 = 外盤 = side 1 (about 11% of trades disagreed: MoneyDJ seems to infer it,
 -- Shioaji's is the exchange's). trade_date is MoneyDJ's: the day the session opens on. MoneyDJ's
 -- mark_bias and cumulative match quantities have no counterpart: 0. total_volume is the stream's
--- (extra; 0 in the history).
+-- (extra; 0 in the history). ts is to the millisecond, as each source has it: MoneyDJ's whole
+-- seconds, Shioaji's milliseconds; a replay shows a source's trades at the precision it has.
 CREATE OR REPLACE VIEW tick_futures AS
-SELECT ts, symbol, trade_date, price, bid, ask, volume, total_volume, direction,
-       mark_bias, buy_match_qty, sell_match_qty, seq
+SELECT CAST(ts AS DateTime64(3)) AS ts, symbol, trade_date, price, bid, ask, volume, total_volume,
+       direction, mark_bias, buy_match_qty, sell_match_qty, seq
 FROM tick_futures_mdj
 WHERE ts < toDateTime('2026-10-21 22:00:00', 'UTC')
 UNION ALL
 SELECT
-    CAST(ts AS DateTime) AS ts,
+    CAST(ts AS DateTime64(3)) AS ts,
     transform(symbol, ['TXF', 'MXF', 'TMF'], ['FITXN*1.TF', 'FIMTXN*1.TF', 'FITMN*1.TF'], symbol) AS symbol,
     toUInt32(toYYYYMMDD(toDate(ts + INTERVAL 8 HOUR - INTERVAL 6 HOUR))) AS trade_date,
     toUInt32(round(price * 100)) AS price,

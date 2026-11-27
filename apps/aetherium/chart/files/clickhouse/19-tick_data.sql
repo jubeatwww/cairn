@@ -9,13 +9,15 @@
 -- and add about 35 stocks MoneyDJ lacks (TDRs among them) and the trades MoneyDJ lost on 11-05; the
 -- direction agrees for 99.8%. Their bid/ask is the best quote after the trade, MoneyDJ's the one
 -- the trade took. A day shows up after the next morning's pass. Fubon's trades (source 'fubon')
--- aren't here: its history drops trades around busy opens.
+-- aren't here: its history drops trades around busy opens. ts is to the millisecond, as each
+-- source has it: MoneyDJ's whole seconds, Shioaji's microseconds cut to the millisecond; a replay
+-- shows a source's trades at the precision it has.
 CREATE OR REPLACE VIEW tick_data AS
-SELECT ts, symbol, price, bid, ask, volume, direction, seq
+SELECT CAST(ts AS DateTime64(3)) AS ts, symbol, price, bid, ask, volume, direction, seq
 FROM tick_data_mdj
 UNION ALL
 SELECT
-    CAST(ts AS DateTime) AS ts,
+    CAST(ts AS DateTime64(3)) AS ts,
     concat(symbol, '.TW') AS symbol,
     toUInt32(round(price * 100)) AS price,
     toUInt32(round(bid * 100)) AS bid,
