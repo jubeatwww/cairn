@@ -38,7 +38,8 @@ infrastructure/        shared services, one directory per component
   postgres/            the CloudNativePG operator
   clickhouse/          Altinity's ClickHouse operator
 apps/                  one directory per app
-  aetherium/           market-tap, collecting Taiwan stock and futures quotes into ClickHouse
+  aetherium/           market-tap, collecting Taiwan stock and futures quotes into ClickHouse, and
+                       hindsight, replaying them
   home/                Mosquitto, Zigbee2MQTT, Home Assistant
   immich/              Immich, public, with the photo library on the NAS
 charts/                building blocks the components and apps share
@@ -274,7 +275,7 @@ Every app or component with a `backup`, and every app with a database or ClickHo
 
 It keeps 14 days (`keepDays`; `schedule` sets the time), and with ClickHouse, the full backup the oldest kept nights build on: about three full ones at a time. A failed backup shows up in Discord as `KubeJobFailed`, and in `scripts/check.py`. What's in them:
 
-- aetherium: market-tap's quotes (ClickHouse) and task log (Postgres); not its working directory, which only holds a day's quotes until they're uploaded, nor the monthly archive, which is on the NAS already
+- aetherium: market-tap's quotes (ClickHouse), its task log and hindsight's data (Postgres); not its working directory, which only holds a day's quotes until they're uploaded, nor the monthly archive, which is on the NAS already
 - home: Zigbee2MQTT's data (the network key and paired devices, so restoring it avoids re-pairing everything) and Home Assistant's `.storage` (users, areas, integrations, groups, HomeKit) and automations, but not the history database
 - immich: Immich's own nightly database dumps, uploads from the apps and user files; not the thumbnails and encoded videos, which Immich rebuilds from the originals, nor the library, which is on the NAS already
 - monitoring: Grafana's database (users, preferences, dashboards made in the UI)
@@ -312,6 +313,8 @@ Run the port-forward on a computer whose kubectl reaches the cluster (the node's
 
 Until the cutover of 2026-10-23 the web feed collected the futures' books and trades too; those are in `tick_futures_mdj` and `orderbook_futures_mdj`. The old names, `tick_futures` and `orderbook_futures`, are views across both sources in the old shape (MoneyDJ's symbols, prices × 100), so the consumers didn't change. Two CronJobs read them every morning: `kbar-tick-agg` (06:40, 1-minute bars from the futures trades) and `replay-segments` (06:50, the sessions complete enough to replay, in Postgres). Design and the parallel run before the cutover: market-tap's `docs/futures-api-design.md`. The stocks' tables went the same way at market-tap's P3: what amt-server uploaded itself is in `orderbook_mdj` and `tick_data_mdj`, and `orderbook` and `tick_data` are views across them and the new tables, in the old shape. The quotes live in the namespace's [ClickHouse](#clickhouse), the task log in its [Postgres](#postgres) (schema `amt`).
 
+`hindsight` (the Aetherium-Trader repo aetherium-hindsight) replays those sessions from the same views (`tick_futures`, `tick_data`, `orderbook_futures`, `orderbook`), at each source's precision, with its web cockpit at `apps.aetherium.hindsight.hostname`, LAN only. It only reads ClickHouse; its own data (scenarios, watchlists, replay sessions, portfolios) is in the Postgres, schema `hindsight`, which it creates and migrates when it starts.
+
 A day not collected is lost for good, so `AmtOrderbookSilent` (collecting but no push received for 10 minutes) and `AmtFuturesSilent` (a contract's book quiet for 5 minutes in a session) are critical alerts, as are `amt-collector`'s for data it holds but can't write, and `AmtStockTradesFailed` (Fubon serves the latest day's trades only); the rest of the `amt`, `amt-futures` and `amt-collector` groups are warnings, and so is `AmtSinopacStockTradesFailed` (Shioaji keeps the history, and the next passes take the last days again).
 
 **Install.** The certificates go in from their files: TWCA's is a JSON file (market-tap's `export-twca` writes it, private key included), Fubon's a .pfx, so in base64:
@@ -327,13 +330,13 @@ Fubon's certificate is valid for a year: before it expires, set `fubon.cert` and
 
 After every install and upgrade, the Job `clickhouse-schema` creates what's missing of the tables and views in `apps/aetherium/chart/files/clickhouse/` (a table that exists is left alone; changing one is an `ALTER` by hand). The views are redefined each time. `orderbook_mdj` and `tick_data_mdj` were rebuilt from market-tap's upload code, which had no DDL for them. `tick_fut_sj` and `book_fut_sj` are amt-futures' tables before P2, kept until it's clear nothing reads them. `market_trades` and `market_quotes` are copies of market-tap's `schema/market.sql`; amt-collector doesn't create them, it checks their columns when it starts.
 
-**Images.** All are built from market-tap's repo and pushed by hand; the node is linux/amd64:
+**Images.** All are built from market-tap's repo, and hindsight's from its own, and pushed by hand; the node is linux/amd64:
 
 ```sh
 docker buildx build --platform linux/amd64 --target login -t ghcr.io/jubeatwww/amt-login:latest --push .
 ```
 
-The login Job pulls its image each morning. The others have a version tag, so a restart never picks up a new build: build the root's `core` target as `ghcr.io/jubeatwww/amt:<version>` (`--target core`), `providers/` as `ghcr.io/jubeatwww/amt-providers:<version>` (amt-futures, amt-stock-trades and amt-sinopac-stock-trades) or `collector/` as `ghcr.io/jubeatwww/amt-collector:<version>` (`-f <dir>/Dockerfile`, from the repo's root), then set `images.amt`, `images.amtProviders` or `images.amtCollector` in the chart's `values.yaml` and apply.
+The login Job pulls its image each morning. The others have a version tag, so a restart never picks up a new build: build the root's `core` target as `ghcr.io/jubeatwww/amt:<version>` (`--target core`), `providers/` as `ghcr.io/jubeatwww/amt-providers:<version>` (amt-futures, amt-stock-trades and amt-sinopac-stock-trades) or `collector/` as `ghcr.io/jubeatwww/amt-collector:<version>` (`-f <dir>/Dockerfile`, from the repo's root), then set `images.amt`, `images.amtProviders` or `images.amtCollector` in the chart's `values.yaml` and apply. hindsight's is tagged with its commit's short hash (`docker buildx build --platform linux/amd64 -t ghcr.io/jubeatwww/hindsight:<hash> --push .` from its repo's root), then `images.hindsight`.
 
 **Trading calendar.** ConfigMap `amt-trading-calendar` lists the weekdays the market is closed, one `YYYY-MM-DD` per line. It's written from `holidays` in the chart's `values.yaml` on the first install only; after that it's edited in the cluster, and helmfile keeps it as it is: `kubectl -n aetherium edit configmap amt-trading-calendar`. Add a typhoon day the morning it's announced, and next year's closures when TWSE publishes them (https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule, usually in December).
 

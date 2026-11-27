@@ -60,11 +60,14 @@ grafana:
 # chart's defaults. Secrets its app.yaml declares: scripts/secret.py fill.
 apps:
   # apps/aetherium: Aetherium's market-tap, collecting Taiwan stock and futures quotes into
-  # ClickHouse.
+  # ClickHouse, and hindsight, replaying them.
   aetherium:
     # NFS export on nas.server for market-tap's monthly archive (Parquet, the ClickHouse partitions
     # older than a year), mounted read-write.
     archivePath: /volume1/archive
+    hindsight:
+      # hindsight, the replay cockpit. LAN only: its DNS record points at network.nodeIp.
+      hostname: hindsight.example.com
   # apps/home: Mosquitto, Zigbee2MQTT, Home Assistant.
   home:
     # LAN only: its DNS record points at network.nodeIp.

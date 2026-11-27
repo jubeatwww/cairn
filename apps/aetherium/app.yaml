@@ -1,7 +1,8 @@
 # Installed by apps.aetherium in site.yaml; its chart is chart/. Fields: README "Components and apps".
-description: Aetherium's market-tap, collecting Taiwan stock and futures quotes into ClickHouse
-# Postgres: market-tap's task log (schema amt). ClickHouse: the quotes. Both in its namespace, in its
-# nightly backup. Its volume isn't: it only holds a day's quotes until they're uploaded.
+description: Aetherium's market-tap, collecting Taiwan stock and futures quotes into ClickHouse, and hindsight, replaying them
+# Postgres: market-tap's task log (schema amt) and hindsight's data (schema hindsight). ClickHouse:
+# the quotes. Both in its namespace, in its nightly backup. Its volume isn't: it only holds a day's
+# quotes until they're uploaded.
 database: {}
 clickhouse: {}
 # The ClickHouse schema Job waits for a fresh server.
@@ -12,6 +13,11 @@ site:
     ask: market-tap 月封存（Parquet）在 NAS 上的 export 路徑
     example: /volume1/archive
     check: absPath
+  hindsight.hostname:
+    comment: "hindsight, the replay cockpit. LAN only: its DNS record points at network.nodeIp."
+    ask: hindsight 的主機名稱（只限內網）
+    example: hindsight.example.com
+    check: hostname
 secrets:
   ghcr.token:
     comment: Pulls the private images from ghcr.io. A classic PAT with read:packages only.

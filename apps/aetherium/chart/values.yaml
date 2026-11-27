@@ -1,6 +1,6 @@
-# Defaults for aetherium. Its settings (archivePath) come from apps.aetherium in site.yaml, and its
-# secrets (ghcr.token, sinotrade, fubon, twcaLocalStorage) from its section of site.secret.yaml;
-# either can override these too (README "Components and apps").
+# Defaults for aetherium. Its settings (archivePath, hindsight.hostname) come from apps.aetherium in
+# site.yaml, and its secrets (ghcr.token, sinotrade, fubon, twcaLocalStorage) from its section of
+# site.secret.yaml; either can override these too (README "Components and apps").
 images:
   # market-tap's two images, built from its repo and pushed by hand, pulled again on every start
   # (imagePullPolicy): amt runs the server, amt-login the Job the server starts every trading
@@ -17,13 +17,20 @@ images:
   # amt-collector, the one writer of market_trades and market_quotes (market-tap's collector/): a
   # version tag too.
   amtCollector: ghcr.io/jubeatwww/amt-collector:0.2.0
+  # hindsight, the replay cockpit (aetherium-hindsight's Dockerfile): tagged with its commit's short
+  # hash, pulled once like the version tags.
+  hindsight: ghcr.io/jubeatwww/hindsight:842f5ff
   # The ClickHouse schema and kbar-tick-agg send SQL over HTTP.
   curl: curlimages/curl:8.22.0
   # replay-segments; its packages are pinned in its CronJob.
   python: python:3.11.16-slim-trixie
 imagePullPolicy: Always
-# The images with a version tag (amt-providers, amt-collector): a tag is never pushed again.
+# The images with a version tag (amt-providers, amt-collector, hindsight): a tag is never pushed
+# again.
 pinnedImagePullPolicy: IfNotPresent
+
+# ClusterIssuer for hindsight's Ingress certificate (infrastructure/base/chart, issuers).
+certIssuer: letsencrypt-prod
 
 # amt-collector refuses a ReplaceUnits call of more rows than this (RESOURCE_EXHAUSTED; its own
 # default is two million), so that one fits in resources.collector: 0.6 to 1.1Mi per thousand rows
@@ -98,6 +105,14 @@ resources:
     limits:
       memory: 512Mi
   replaySegments:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  # Not measured in the cluster yet (2026-11-28); the limit keeps a runaway replay from taking the
+  # node's memory.
+  hindsight:
     requests:
       cpu: 100m
       memory: 128Mi

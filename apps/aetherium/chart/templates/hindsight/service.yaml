@@ -1,0 +1,15 @@
+# hindsight's API, its WebSocket stream and the cockpit, for the Ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: hindsight
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: hindsight
+spec:
+  selector:
+    app.kubernetes.io/name: hindsight
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

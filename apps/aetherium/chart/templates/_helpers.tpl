@@ -10,6 +10,11 @@
 {{- end }}
 {{- end }}
 
+{{/* hindsight's hostname, e.g. hindsight.example.com. */}}
+{{- define "aetherium.hindsightHost" -}}
+{{ required (printf "apps.%s.hindsight.hostname is required (site.yaml)" .Release.Name) (.Values.hindsight | default dict).hostname }}
+{{- end }}
+
 {{/* The Postgres cluster in this namespace (charts/postgres-cluster). */}}
 {{- define "aetherium.databaseEnv" -}}
 - name: DATABASE_URL

@@ -1,0 +1,70 @@
+# hindsight: replays the recorded sessions from the views (tick_futures, tick_data,
+# orderbook_futures, orderbook), and serves its web cockpit on the same port. Its own data (scenarios,
+# watchlists, replay sessions, portfolios) is in the namespace's Postgres, schema hindsight, which
+# it creates and migrates when it starts. It only reads ClickHouse.
+#
+# Recreate and one replica: the IDs it generates are unique per process (AH_WORKER_ID), and a
+# replay runs in its memory.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hindsight
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hindsight
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hindsight
+    spec:
+      # It never calls the Kubernetes API.
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: ghcr-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: hindsight
+          image: {{ .Values.images.hindsight }}
+          imagePullPolicy: {{ .Values.pinnedImagePullPolicy }}
+          env:
+            - name: AH_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-app
+                  key: uri
+            # The database is shared: market-tap's tables are in schema amt.
+            - name: AH_DATABASE_SCHEMA
+              value: hindsight
+            {{- range $var, $key := dict "CLICKHOUSE_URL" "url" "CLICKHOUSE_DATABASE" "database" "CLICKHOUSE_USER" "username" "CLICKHOUSE_PASSWORD" "password" }}
+            - name: {{ $var }}
+              valueFrom:
+                secretKeyRef:
+                  name: clickhouse-app
+                  key: {{ $key }}
+            {{- end }}
+            - name: AH_LOG_FORMAT
+              value: json
+          ports:
+            - name: http
+              containerPort: 8080
+          # Ready once it reaches both Postgres and ClickHouse.
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources.hindsight | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
