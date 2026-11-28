@@ -19,7 +19,7 @@ images:
   amtCollector: ghcr.io/jubeatwww/amt-collector:0.2.0
   # hindsight, the replay cockpit (aetherium-hindsight's Dockerfile): tagged with its commit's short
   # hash, pulled once like the version tags.
-  hindsight: ghcr.io/jubeatwww/hindsight:91ef46d
+  hindsight: ghcr.io/jubeatwww/hindsight:d32aad2
   # The ClickHouse schema and kbar-tick-agg send SQL over HTTP.
   curl: curlimages/curl:8.22.0
   # replay-segments; its packages are pinned in its CronJob.
